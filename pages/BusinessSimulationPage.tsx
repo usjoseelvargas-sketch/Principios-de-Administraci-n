@@ -8,6 +8,10 @@ import { SimulationIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon } from '../
 import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
 import { SimulationResult } from '../types';
 
+// NUEVAS IMPORTACIONES PARA FIRESTORE
+import { getFirestore, collection, addDoc } from 'firebase/firestore';
+import { getApp } from 'firebase/app';
+
 interface DecisionOption {
   id: string;
   text: string;
@@ -21,77 +25,12 @@ interface Scenario {
   kpiNames: string[]; // e.g., ["Sales Change (%)", "Brand Awareness (1-10)"]
 }
 
+// Se comenta el array de escenarios fijos para usar la generación por IA
+/*
 const scenarios: Scenario[] = [
-  {
-    id: 'marketing_campaign',
-    title: 'Decisión de Campaña de Marketing',
-    description: 'Tu empresa está lanzando un nuevo producto. Tienes un presupuesto limitado para la campaña de marketing inicial. ¿Cómo lo distribuirías?',
-    options: [
-      { id: 'social_media', text: 'Invertir fuertemente en redes sociales y marketing de influencers.' },
-      { id: 'traditional_media', text: 'Enfocarse en medios tradicionales (TV, radio, prensa).' },
-      { id: 'balanced_approach', text: 'Un enfoque equilibrado entre digital y tradicional.' },
-    ],
-    kpiNames: ["Cambio en Ventas (%)", "Conciencia de Marca (1-10)", "Gasto de Presupuesto (%)"]
-  },
-  {
-    id: 'product_pricing',
-    title: 'Estrategia de Precios del Producto',
-    description: 'Estás definiendo el precio para un nuevo producto innovador. Considera el mercado objetivo y los costos de producción.',
-    options: [
-      { id: 'premium_pricing', text: 'Precio premium para posicionarlo como producto de alta gama.' },
-      { id: 'competitive_pricing', text: 'Precio competitivo, similar al de los principales competidores.' },
-      { id: 'penetration_pricing', text: 'Precio bajo para ganar cuota de mercado rápidamente.' },
-    ],
-    kpiNames: ["Margen de Ganancia (%)", "Volumen de Ventas (Unidades)", "Percepción de Calidad (1-5)"]
-  },
-  {
-    id: 'pr_crisis',
-    title: 'Gestión de Crisis de Relaciones Públicas',
-    description: 'Un lote defectuoso de tu producto ha llegado a los clientes, y las quejas están escalando en redes sociales. ¿Cuál es tu primera acción pública?',
-    options: [
-        { id: 'acknowledge_promise', text: 'Emitir un comunicado reconociendo el problema y prometiendo una solución.' },
-        { id: 'ignore_investigate', text: 'Ignorar las quejas y esperar a que pase la tormenta, investigando internamente.' },
-        { id: 'proactive_refund', text: 'Ofrecer reembolsos proactivamente a todos los clientes afectados en redes sociales.' },
-        { id: 'deny_problem', text: 'Negar públicamente la existencia de un problema y atribuirlo a casos aislados.' },
-    ],
-    kpiNames: ["Confianza del Cliente (1-10)", "Impacto en Reputación (-10 a +10)", "Costo de Solución ($)"]
-  },
-  {
-    id: 'international_expansion',
-    title: 'Estrategia de Expansión Internacional',
-    description: 'Tu empresa ha tenido éxito a nivel nacional y está considerando expandirse a un nuevo mercado internacional. ¿Qué estrategia de entrada eliges?',
-    options: [
-        { id: 'direct_export', text: 'Exportación directa: Vender tus productos directamente a clientes en el nuevo mercado.' },
-        { id: 'joint_venture', text: 'Joint Venture: Formar una alianza estratégica con una empresa local.' },
-        { id: 'fdi', text: 'Inversión Extranjera Directa: Establecer tus propias operaciones en el país.' },
-        { id: 'franchise', text: 'Franquicia: Otorgar licencias a operadores locales para usar tu marca y modelo.' },
-    ],
-    kpiNames: ["Inversión Inicial ($)", "Potencial de Crecimiento (%)", "Nivel de Control (1-5)", "Riesgo (1-5)"]
-  },
-  {
-    id: 'key_hire',
-    title: 'Decisión de Contratación para un Rol Clave',
-    description: 'Necesitas contratar un nuevo Director de Marketing. Tienes dos candidatos finales. ¿A quién contratas?',
-    options: [
-        { id: 'veteran', text: 'Candidato A: Un veterano de la industria con 20 años de experiencia pero poca exposición al marketing digital.' },
-        { id: 'rising_star', text: 'Candidato B: Una estrella en ascenso con 5 años de experiencia, experto en marketing digital, pero sin experiencia en gestión.' },
-        { id: 'reopen_search', text: 'Reabrir el proceso de búsqueda para encontrar un candidato "perfecto", arriesgando perder a los dos actuales.' },
-    ],
-    kpiNames: ["Costo de Contratación ($)", "Tiempo para Impacto (meses)", "Moral del Equipo (1-5)", "Potencial de Innovación (1-5)"]
-  },
-  {
-    id: 'tech_investment',
-    title: 'Inversión en Nueva Tecnología',
-    description: 'El departamento de operaciones propone una inversión significativa en un nuevo sistema de automatización que promete aumentar la eficiencia pero requiere una alta inversión inicial y capacitación.',
-    options: [
-        { id: 'full_investment', text: 'Aprobar la inversión completa inmediatamente.' },
-        { id: 'pilot_project', text: 'Realizar un proyecto piloto en un área para evaluar el impacto real antes de una implementación total.' },
-        { id: 'reject_proposal', text: 'Rechazar la propuesta para mantener los costos bajos este año fiscal.' },
-        { id: 'cheaper_solution', text: 'Buscar una solución tecnológica más barata, aunque menos potente, de otro proveedor.' },
-    ],
-    kpiNames: ["Productividad (unidades/hora)", "Retorno de Inversión (ROI %)", "Satisfacción del Empleado (1-5)", "Gasto de Capital ($)"]
-  }
+...
 ];
+*/
 
 const parseKpisFromString = (text: string, kpiNames: string[]): { name: string; value: string }[] => {
     const kpis: { name: string; value: string }[] = [];
@@ -107,25 +46,120 @@ const parseKpisFromString = (text: string, kpiNames: string[]): { name: string; 
 
 
 const BusinessSimulationPage: React.FC = () => {
-  const [currentScenario, setCurrentScenario] = useState<Scenario | null>(scenarios[0]);
+  // El estado ahora comienza en null, ya que no hay un escenario precargado
+  const [currentScenario, setCurrentScenario] = useState<Scenario | null>(null);
   const [selectedOption, setSelectedOption] = useState<DecisionOption | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
+  const [studentName, setStudentName] = useState<string>('');
+  
+  // Nuevo estado para manejar la carga y errores al generar el escenario
+  const [isLoadingScenario, setIsLoadingScenario] = useState<boolean>(false);
+  const [scenarioError, setScenarioError] = useState<string | null>(null);
   
   const { data: geminiResponse, error, isLoading, executeQuery, reset: resetGemini } = useGeminiTextQuery();
 
-  const handleScenarioChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const scenarioId = event.target.value;
-    const newScenario = scenarios.find(s => s.id === scenarioId) || null;
-    setCurrentScenario(newScenario);
+  // Nueva función para generar un escenario usando la API de Gemini
+  const generateNewScenario = useCallback(async () => {
+    setIsLoadingScenario(true);
+    setScenarioError(null);
+    setCurrentScenario(null);
     setSelectedOption(null);
     setSimulationResult(null);
     resetGemini();
-  };
+
+    const prompt = `
+        Genera un escenario de simulación de negocios único para estudiantes.
+        El escenario debe incluir un título, una descripción, 3-4 opciones de decisión y 3-4 KPIs relevantes con sus nombres.
+        El formato debe ser JSON.
+    `;
+
+    // Define el esquema para asegurar que la respuesta JSON de la IA tenga la estructura correcta
+    const payload = {
+        contents: [{
+            parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: "OBJECT",
+                properties: {
+                    id: { type: "STRING" },
+                    title: { type: "STRING" },
+                    description: { type: "STRING" },
+                    options: {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                id: { type: "STRING" },
+                                text: { type: "STRING" }
+                            }
+                        }
+                    },
+                    kpiNames: {
+                        type: "ARRAY",
+                        items: { type: "STRING" }
+                    }
+                },
+                "propertyOrdering": ["id", "title", "description", "options", "kpiNames"]
+            }
+        }
+    };
+    
+    // Configuración de la API para generar JSON
+    const apiKey = "";
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+    // Llama a la API de forma segura con reintentos
+    let retryCount = 0;
+    const maxRetries = 3;
+    const initialDelay = 1000;
+
+    while (retryCount < maxRetries) {
+        try {
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                if (response.status === 429) {
+                    const delay = initialDelay * Math.pow(2, retryCount);
+                    await new Promise(res => setTimeout(res, delay));
+                    retryCount++;
+                    continue; // Retry the request
+                } else {
+                    throw new Error(`API Error: ${response.statusText}`);
+                }
+            }
+
+            const result = await response.json();
+            const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (jsonText) {
+                const newScenario = JSON.parse(jsonText);
+                setCurrentScenario(newScenario);
+                break; // Exit the loop on success
+            } else {
+                throw new Error("Respuesta de la IA vacía o con formato incorrecto.");
+            }
+        } catch (e) {
+            console.error("Error generating scenario:", e);
+            setScenarioError(`Hubo un error al generar el escenario: ${e.message}`);
+            break; // Exit the loop on a non-retryable error
+        }
+    }
+    setIsLoadingScenario(false);
+  }, [resetGemini]);
 
   const handleDecision = useCallback(async () => {
     if (!currentScenario || !selectedOption) return;
 
-    setSimulationResult(null); // Clear previous results before new query
+    if (!studentName.trim()) {
+        alert("Por favor, ingresa tu nombre para continuar.");
+        return;
+    }
+    setSimulationResult(null);
 
     const prompt = `
       Eres un IA de simulación de negocios para estudiantes.
@@ -140,41 +174,75 @@ const BusinessSimulationPage: React.FC = () => {
     `;
     
     await executeQuery(prompt, "Eres un simulador de negocios que ayuda a los estudiantes a comprender las consecuencias de sus decisiones.");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentScenario, selectedOption, executeQuery]);
   
-  // Process Gemini response when it arrives
+    try {
+        const db = getFirestore(getApp());
+        await addDoc(collection(db, "decisiones_estudiantes"), {
+            nombreEstudiante: studentName.trim(),
+            escenario: currentScenario.title,
+            decision: selectedOption.text,
+            timestamp: new Date()
+        });
+        console.log("Decisión guardada en Firestore.");
+    } catch (e) {
+        console.error("Error al guardar en Firestore:", e);
+        alert("Hubo un error al guardar tu decisión. Intenta de nuevo.");
+    }
+
+  }, [currentScenario, selectedOption, executeQuery, studentName]);
+  
   React.useEffect(() => {
     if (geminiResponse && currentScenario) {
-      const narrative = geminiResponse; // The whole text is the narrative
+      const narrative = geminiResponse;
       const kpis = parseKpisFromString(geminiResponse, currentScenario.kpiNames);
       setSimulationResult({ narrative, kpis });
     }
   }, [geminiResponse, currentScenario]);
 
+  // Se ejecuta la generación del escenario la primera vez que se carga el componente
+  React.useEffect(() => {
+    if (!currentScenario && !isLoadingScenario) {
+      generateNewScenario();
+    }
+  }, [currentScenario, isLoadingScenario, generateNewScenario]);
 
   return (
     <PageWrapper title="Laboratorio de Simulación Empresarial" titleIcon={<SimulationIcon />}>
       <InteractiveModule
         title="Escenarios de Decisión"
         icon={<LightbulbIcon className="w-6 h-6" />}
-        initialInstructions="Selecciona un escenario, elige una opción y observa los resultados simulados por la IA. Reflexiona sobre las consecuencias de cada decisión."
+        initialInstructions="Haz clic en 'Generar Nuevo Escenario' para empezar. Luego, elige una opción y observa los resultados simulados por la IA."
       >
         <div className="mb-6">
-          <label htmlFor="scenario-select" className="block text-sm font-medium text-neutral-700 mb-1">
-            Seleccionar Escenario:
+          <label htmlFor="studentNameInput" className="block text-sm font-medium text-neutral-700 mb-1">
+            Nombre del Estudiante:
           </label>
-          <select
-            id="scenario-select"
-            value={currentScenario?.id || ''}
-            onChange={handleScenarioChange}
+          <input
+            id="studentNameInput"
+            type="text"
+            value={studentName}
+            onChange={(e) => setStudentName(e.target.value)}
+            placeholder="Escribe tu nombre"
             className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
-          >
-            {scenarios.map(s => (
-              <option key={s.id} value={s.id}>{s.title}</option>
-            ))}
-          </select>
+          />
         </div>
+
+        <Button
+          onClick={generateNewScenario}
+          isLoading={isLoadingScenario}
+          className="w-full mb-6"
+        >
+          {isLoadingScenario ? 'Generando...' : 'Generar Nuevo Escenario'}
+        </Button>
+
+        {scenarioError && (
+          <Card className="mt-6 bg-red-50 border-red-500">
+            <div className="flex items-center text-red-700">
+              <XCircleIcon className="w-6 h-6 mr-2" />
+              <p><strong>Error:</strong> {scenarioError}</p>
+            </div>
+          </Card>
+        )}
 
         {currentScenario && (
           <>
@@ -197,7 +265,7 @@ const BusinessSimulationPage: React.FC = () => {
 
             <Button
               onClick={handleDecision}
-              disabled={!selectedOption || isLoading}
+              disabled={!selectedOption || isLoading || isLoadingScenario || !studentName.trim()}
               isLoading={isLoading}
             >
               {isLoading ? 'Simulando...' : 'Tomar Decisión y Ver Resultado'}
@@ -238,7 +306,8 @@ const BusinessSimulationPage: React.FC = () => {
             </p>
           </Card>
         )}
-         {isLoading && !simulationResult && <div className="mt-6"><LoadingSpinner text="Generando resultado de la simulación..."/></div>}
+        {isLoading && !simulationResult && <div className="mt-6"><LoadingSpinner text="Generando resultado de la simulación..."/></div>}
+        {isLoadingScenario && <div className="mt-6"><LoadingSpinner text="Generando nuevo escenario..."/></div>}
       </InteractiveModule>
     </PageWrapper>
   );
