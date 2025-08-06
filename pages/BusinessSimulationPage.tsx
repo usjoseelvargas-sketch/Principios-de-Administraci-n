@@ -1,17 +1,20 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio unificado
+
+// Componentes y Constantes
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
 import { SimulationIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon } from '../constants';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
 import { SimulationResult } from '../types';
 
-// NUEVAS IMPORTACIONES PARA FIRESTORE
-import { getFirestore, collection, addDoc } from 'firebase/firestore';
+// Importaciones de Firebase
+import { getFirestore, collection, addDoc, doc, setDoc } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 
+// Definiciones de tipos locales para mayor claridad
 interface DecisionOption {
   id: string;
   text: string;
@@ -22,16 +25,10 @@ interface Scenario {
   title: string;
   description: string;
   options: DecisionOption[];
-  kpiNames: string[]; // e.g., ["Sales Change (%)", "Brand Awareness (1-10)"]
+  kpiNames: string[];
 }
 
-// Se comenta el array de escenarios fijos para usar la generación por IA
-/*
-const scenarios: Scenario[] = [
-...
-];
-*/
-
+// Funciones de parseo (sin cambios, están bien)
 const parseKpisFromString = (text: string, kpiNames: string[]): { name: string; value: string }[] => {
     const kpis: { name: string; value: string }[] = [];
     kpiNames.forEach(kpiName => {
@@ -44,121 +41,86 @@ const parseKpisFromString = (text: string, kpiNames: string[]): { name: string; 
     return kpis;
 };
 
+const parseScoreFromString = (text: string): number | null => {
+  const regex = /Calificación:\s*([\d.]+)/;
+  const match = text.match(regex);
+  if (match && match[1]) {
+    const score = parseFloat(match[1]);
+    return isNaN(score) ? null : score;
+  }
+  return null;
+};
+
 
 const BusinessSimulationPage: React.FC = () => {
-  // El estado ahora comienza en null, ya que no hay un escenario precargado
   const [currentScenario, setCurrentScenario] = useState<Scenario | null>(null);
   const [selectedOption, setSelectedOption] = useState<DecisionOption | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [studentName, setStudentName] = useState<string>('');
   
-  // Nuevo estado para manejar la carga y errores al generar el escenario
-  const [isLoadingScenario, setIsLoadingScenario] = useState<boolean>(false);
-  const [scenarioError, setScenarioError] = useState<string | null>(null);
-  
-  const { data: geminiResponse, error, isLoading, executeQuery, reset: resetGemini } = useGeminiTextQuery();
+  // CAMBIO: Estados unificados para las llamadas a la API
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Nueva función para generar un escenario usando la API de Gemini
-  const generateNewScenario = useCallback(async () => {
-    setIsLoadingScenario(true);
-    setScenarioError(null);
+  // Función para limpiar estados
+  const resetAll = useCallback(() => {
+    setError(null);
+    setIsLoading(false);
     setCurrentScenario(null);
     setSelectedOption(null);
     setSimulationResult(null);
-    resetGemini();
+  }, []);
+
+  const generateNewScenario = useCallback(async () => {
+    resetAll();
+    setIsLoading(true);
 
     const prompt = `
-        Genera un escenario de simulación de negocios único para estudiantes.
-        El escenario debe incluir un título, una descripción, 3-4 opciones de decisión y 3-4 KPIs relevantes con sus nombres.
-        El formato debe ser JSON.
+        Genera un escenario de simulación de negocios único y conciso para un estudiante de administración.
+        El escenario debe estar en formato JSON y contener:
+        1. "id": un string único (puedes usar un timestamp numérico como string).
+        2. "title": un título breve y atractivo para el escenario.
+        3. "description": una descripción de 2-3 frases sobre un dilema empresarial.
+        4. "options": un array de 3 o 4 objetos, cada uno con "id" (e.g., "A", "B", "C") y "text" (la decisión a tomar).
+        5. "kpiNames": un array de 3 o 4 strings que representen los indicadores clave de rendimiento relevantes (e.g., "Ventas Mensuales", "Satisfacción del Cliente (1-10)", "Costos Operativos").
+        
+        Asegúrate de que el JSON sea válido. Ejemplo de estructura:
+        {
+          "id": "1678886400000",
+          "title": "Crisis de Redes Sociales",
+          "description": "Una reseña negativa de un influencer se ha vuelto viral. Las ventas online han caído un 20%. ¿Qué acción priorizas?",
+          "options": [
+            { "id": "A", "text": "Lanzar una campaña de marketing de contraataque con otros influencers." },
+            { "id": "B", "text": "Ignorar la reseña y esperar a que pase la tormenta." },
+            { "id": "C", "text": "Publicar una disculpa oficial y ofrecer un descuento a todos los clientes." }
+          ],
+          "kpiNames": ["Ventas Online", "Sentimiento de Marca", "Costo de Adquisición de Cliente"]
+        }
     `;
 
-    // Define el esquema para asegurar que la respuesta JSON de la IA tenga la estructura correcta
-    const payload = {
-        contents: [{
-            parts: [{ text: prompt }]
-        }],
-        generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: "OBJECT",
-                properties: {
-                    id: { type: "STRING" },
-                    title: { type: "STRING" },
-                    description: { type: "STRING" },
-                    options: {
-                        type: "ARRAY",
-                        items: {
-                            type: "OBJECT",
-                            properties: {
-                                id: { type: "STRING" },
-                                text: { type: "STRING" }
-                            }
-                        }
-                    },
-                    kpiNames: {
-                        type: "ARRAY",
-                        items: { type: "STRING" }
-                    }
-                },
-                "propertyOrdering": ["id", "title", "description", "options", "kpiNames"]
-            }
-        }
-    };
-    
-    // Configuración de la API para generar JSON
-    const apiKey = "";
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
-
-    // Llama a la API de forma segura con reintentos
-    let retryCount = 0;
-    const maxRetries = 3;
-    const initialDelay = 1000;
-
-    while (retryCount < maxRetries) {
-        try {
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                if (response.status === 429) {
-                    const delay = initialDelay * Math.pow(2, retryCount);
-                    await new Promise(res => setTimeout(res, delay));
-                    retryCount++;
-                    continue; // Retry the request
-                } else {
-                    throw new Error(`API Error: ${response.statusText}`);
-                }
-            }
-
-            const result = await response.json();
-            const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (jsonText) {
-                const newScenario = JSON.parse(jsonText);
-                setCurrentScenario(newScenario);
-                break; // Exit the loop on success
-            } else {
-                throw new Error("Respuesta de la IA vacía o con formato incorrecto.");
-            }
-        } catch (e) {
-            console.error("Error generating scenario:", e);
-            setScenarioError(`Hubo un error al generar el escenario: ${e.message}`);
-            break; // Exit the loop on a non-retryable error
-        }
+    try {
+      // CAMBIO: Usamos nuestro servicio. La API de Gemini puede generar JSON directamente.
+      const responseText = await generateContent(prompt);
+      // Limpiamos la respuesta para asegurarnos de que sea un JSON válido
+      const cleanedJsonString = responseText.replace(/```json|```/g, '').trim();
+      const newScenario = JSON.parse(cleanedJsonString);
+      setCurrentScenario(newScenario);
+    } catch (e) {
+      console.error("Error al generar escenario:", e);
+      setError(e instanceof Error ? e.message : "No se pudo generar el escenario. Revisa el formato de la respuesta.");
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoadingScenario(false);
-  }, [resetGemini]);
+  }, [resetAll]);
 
   const handleDecision = useCallback(async () => {
-    if (!currentScenario || !selectedOption) return;
-
-    if (!studentName.trim()) {
-        alert("Por favor, ingresa tu nombre para continuar.");
-        return;
+    if (!currentScenario || !selectedOption || !studentName.trim()) {
+      alert("Por favor, ingresa tu nombre y selecciona una opción.");
+      return;
     }
+
+    setIsLoading(true);
+    setError(null);
     setSimulationResult(null);
 
     const prompt = `
@@ -166,54 +128,61 @@ const BusinessSimulationPage: React.FC = () => {
       Escenario: ${currentScenario.title} - ${currentScenario.description}
       Decisión del estudiante: ${selectedOption.text}
 
-      Describe el resultado probable de esta decisión en 1-2 párrafos concisos.
-      Incluye el impacto potencial en los siguientes KPIs (usa el formato exacto incluyendo el nombre del KPI):
-      ${currentScenario.kpiNames.map(kpi => `- ${kpi}: [valor numérico o descriptivo breve]`).join('\n')}
-      
-      Concéntrate en un lenguaje claro y educativo.
+      1.  **Describe el resultado probable** de esta decisión en 1-2 párrafos concisos y educativos.
+      2.  **Calcula el impacto** en los siguientes KPIs (usa el formato exacto "KPI: valor"):
+          ${currentScenario.kpiNames.map(kpi => `- ${kpi}: [valor numérico o descriptivo breve]`).join('\n')}
+      3.  **Proporciona una calificación** entre 0.0 y 5.0 (un decimal) para esta decisión. Usa el formato exacto: "Calificación: [valor]".
     `;
-    
-    await executeQuery(prompt, "Eres un simulador de negocios que ayuda a los estudiantes a comprender las consecuencias de sus decisiones.");
-  
+
     try {
+      // CAMBIO: Llamada directa a nuestro servicio
+      const responseText = await generateContent(prompt);
+      
+      const narrative = responseText;
+      const kpis = parseKpisFromString(responseText, currentScenario.kpiNames);
+      const score = parseScoreFromString(responseText);
+      
+      const resultData = { narrative, kpis, score };
+      setSimulationResult(resultData);
+
+      // CAMBIO: Guardar en Firestore DESPUÉS de tener el resultado
+      try {
         const db = getFirestore(getApp());
         await addDoc(collection(db, "decisiones_estudiantes"), {
             nombreEstudiante: studentName.trim(),
-            escenario: currentScenario.title,
-            decision: selectedOption.text,
+            escenario: currentScenario,
+            decision: selectedOption,
+            resultado: resultData, // Guardamos el resultado completo
             timestamp: new Date()
         });
-        console.log("Decisión guardada en Firestore.");
+        console.log("Decisión y resultado guardados en Firestore.");
+      } catch (dbError) {
+          console.error("Error al guardar en Firestore:", dbError);
+          // No mostramos alert al usuario, es un fallo de fondo
+      }
+
     } catch (e) {
-        console.error("Error al guardar en Firestore:", e);
-        alert("Hubo un error al guardar tu decisión. Intenta de nuevo.");
+      console.error("Error al simular decisión:", e);
+      setError(e instanceof Error ? e.message : "No se pudo simular el resultado.");
+    } finally {
+      setIsLoading(false);
     }
-
-  }, [currentScenario, selectedOption, executeQuery, studentName]);
+  }, [currentScenario, selectedOption, studentName]);
   
-  React.useEffect(() => {
-    if (geminiResponse && currentScenario) {
-      const narrative = geminiResponse;
-      const kpis = parseKpisFromString(geminiResponse, currentScenario.kpiNames);
-      setSimulationResult({ narrative, kpis });
-    }
-  }, [geminiResponse, currentScenario]);
-
-  // Se ejecuta la generación del escenario la primera vez que se carga el componente
-  React.useEffect(() => {
-    if (!currentScenario && !isLoadingScenario) {
-      generateNewScenario();
-    }
-  }, [currentScenario, isLoadingScenario, generateNewScenario]);
+  // Generar escenario al cargar la página por primera vez
+  useEffect(() => {
+    generateNewScenario();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <PageWrapper title="Laboratorio de Simulación Empresarial" titleIcon={<SimulationIcon />}>
       <InteractiveModule
         title="Escenarios de Decisión"
         icon={<LightbulbIcon className="w-6 h-6" />}
-        initialInstructions="Haz clic en 'Generar Nuevo Escenario' para empezar. Luego, elige una opción y observa los resultados simulados por la IA."
+        initialInstructions="Ingresa tu nombre, genera un escenario, elige una opción y observa los resultados simulados por la IA."
       >
-        <div className="mb-6">
+        <div className="mb-4">
           <label htmlFor="studentNameInput" className="block text-sm font-medium text-neutral-700 mb-1">
             Nombre del Estudiante:
           </label>
@@ -222,34 +191,36 @@ const BusinessSimulationPage: React.FC = () => {
             type="text"
             value={studentName}
             onChange={(e) => setStudentName(e.target.value)}
-            placeholder="Escribe tu nombre"
+            placeholder="Escribe tu nombre para empezar"
             className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+            disabled={isLoading}
           />
         </div>
 
         <Button
           onClick={generateNewScenario}
-          isLoading={isLoadingScenario}
+          isLoading={isLoading && !currentScenario}
+          disabled={isLoading}
           className="w-full mb-6"
         >
-          {isLoadingScenario ? 'Generando...' : 'Generar Nuevo Escenario'}
+          {isLoading && !currentScenario ? 'Generando Escenario...' : 'Generar Nuevo Escenario'}
         </Button>
 
-        {scenarioError && (
-          <Card className="mt-6 bg-red-50 border-red-500">
+        {error && (
+          <Card className="my-4 bg-red-50 border-red-500">
             <div className="flex items-center text-red-700">
               <XCircleIcon className="w-6 h-6 mr-2" />
-              <p><strong>Error:</strong> {scenarioError}</p>
+              <p><strong>Error:</strong> {error}</p>
             </div>
           </Card>
         )}
 
-        {currentScenario && (
-          <>
-            <h3 className="text-lg font-semibold text-neutral-800 mb-2">{currentScenario.title}</h3>
+        {currentScenario && !isLoading && (
+          <Card className="mb-4">
+            <h3 className="text-xl font-semibold text-neutral-800 mb-2">{currentScenario.title}</h3>
             <p className="text-neutral-600 mb-4">{currentScenario.description}</p>
             
-            <div className="space-y-3 mb-6">
+            <div className="space-y-3 mb-4">
               {currentScenario.options.map(option => (
                 <Button
                   key={option.id}
@@ -265,20 +236,11 @@ const BusinessSimulationPage: React.FC = () => {
 
             <Button
               onClick={handleDecision}
-              disabled={!selectedOption || isLoading || isLoadingScenario || !studentName.trim()}
-              isLoading={isLoading}
+              disabled={!selectedOption || isLoading || !studentName.trim()}
+              isLoading={isLoading && !!selectedOption}
             >
-              {isLoading ? 'Simulando...' : 'Tomar Decisión y Ver Resultado'}
+              {isLoading && !!selectedOption ? 'Simulando...' : 'Tomar Decisión y Ver Resultado'}
             </Button>
-          </>
-        )}
-
-        {error && (
-          <Card className="mt-6 bg-red-50 border-red-500">
-            <div className="flex items-center text-red-700">
-              <XCircleIcon className="w-6 h-6 mr-2" />
-              <p><strong>Error:</strong> {error}</p>
-            </div>
           </Card>
         )}
 
@@ -288,12 +250,22 @@ const BusinessSimulationPage: React.FC = () => {
                 <CheckCircleIcon className="w-6 h-6 mr-2 text-green-600"/>
                 Resultado de la Simulación
             </h4>
-            <div className="prose prose-sm max-w-none text-neutral-700 mb-4">
-                <p>{simulationResult.narrative}</p>
+            
+            {simulationResult.score !== null && (
+              <div className="my-4 p-4 bg-primary-light rounded-md border border-primary">
+                <p className="text-xl font-bold text-neutral-800 text-center">
+                  Calificación de la Decisión: <span className="text-primary-dark">{simulationResult.score.toFixed(1)} / 5.0</span>
+                </p>
+              </div>
+            )}
+
+            <div className="prose prose-sm max-w-none text-neutral-700 mb-4 whitespace-pre-wrap">
+                {simulationResult.narrative}
             </div>
+
             {simulationResult.kpis && simulationResult.kpis.length > 0 && (
               <div>
-                <h5 className="font-semibold text-neutral-700 mb-2">Indicadores Clave (KPIs):</h5>
+                <h5 className="font-semibold text-neutral-700 mb-2">Impacto en Indicadores (KPIs):</h5>
                 <ul className="list-disc list-inside space-y-1 text-neutral-600">
                   {simulationResult.kpis.map(kpi => (
                     <li key={kpi.name}><strong>{kpi.name}:</strong> {kpi.value}</li>
@@ -301,13 +273,14 @@ const BusinessSimulationPage: React.FC = () => {
                 </ul>
               </div>
             )}
-            <p className="mt-4 text-sm text-neutral-500 italic">
-              Recuerda: Esta es una simulación simplificada. En el mundo real, múltiples factores influirían en el resultado. Usa esto como una herramienta de aprendizaje y reflexión.
+            <p className="mt-4 text-xs text-neutral-500 italic">
+              Recuerda: Esta es una simulación simplificada. En el mundo real, múltiples factores influirían en el resultado.
             </p>
           </Card>
         )}
-        {isLoading && !simulationResult && <div className="mt-6"><LoadingSpinner text="Generando resultado de la simulación..."/></div>}
-        {isLoadingScenario && <div className="mt-6"><LoadingSpinner text="Generando nuevo escenario..."/></div>}
+        
+        {isLoading && <div className="mt-6"><LoadingSpinner text={currentScenario ? "Simulando resultado..." : "Generando escenario..."}/></div>}
+
       </InteractiveModule>
     </PageWrapper>
   );

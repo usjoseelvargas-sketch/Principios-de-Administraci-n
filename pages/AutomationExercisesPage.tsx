@@ -1,32 +1,39 @@
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio
+
+// Componentes y Constantes (asumimos que existen y están correctos)
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
-import { AutomationIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
-import { AutomationScenario, SpeechRecognition } from '../types';
-import { AUTOMATION_SCENARIOS } from '../constants';
+import { AutomationIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants'; // Asegúrate de que estos iconos existan
+import { AutomationScenario, SpeechRecognition } from '../types'; // Asegúrate de que estos tipos existan
+import { AUTOMATION_SCENARIOS } from '../constants'; // Asegúrate de que estas constantes existan
 
 const AutomationExercisesPage: React.FC = () => {
   const [currentScenario, setCurrentScenario] = useState<AutomationScenario | null>(null);
   const [selectedStepIds, setSelectedStepIds] = useState<Set<string>>(new Set());
   const [justification, setJustification] = useState('');
 
-  const {
-    data: geminiFeedback,
-    error: geminiError,
-    isLoading: isLoadingGemini,
-    executeQuery: fetchGeminiFeedback,
-    reset: resetGemini,
-  } = useGeminiTextQuery();
+  // CAMBIO: Estados locales para manejar la llamada a la API en lugar del hook
+  const [geminiFeedback, setGeminiFeedback] = useState<string | null>(null);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [isLoadingGemini, setIsLoadingGemini] = useState<boolean>(false);
   
+  // Speech-to-text state
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
 
+  // Función para limpiar el estado de Gemini
+  const resetGemini = useCallback(() => {
+    setGeminiFeedback(null);
+    setGeminiError(null);
+    setIsLoadingGemini(false);
+  }, []);
+
+  // Speech-to-text setup (sin cambios)
   useEffect(() => {
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognitionAPI) {
@@ -41,7 +48,7 @@ const AutomationExercisesPage: React.FC = () => {
             setJustification(prev => prev ? `${prev} ${transcript}` : transcript);
             setSpeechError(null);
         };
-        recognition.onerror = (event) => setSpeechError(`Error: ${event.error}. Por favor, escribe.`);
+        recognition.onerror = (event) => setSpeechError(`Error en reconocimiento: ${event.error}. Por favor, escribe tu respuesta.`);
         recognition.onend = () => setIsRecording(false);
     }
     return () => {
@@ -62,7 +69,6 @@ const AutomationExercisesPage: React.FC = () => {
       }
       setIsRecording(!isRecording);
   };
-
 
   const loadNewScenario = useCallback(() => {
     if(isRecording) handleToggleRecording();
@@ -91,15 +97,18 @@ const AutomationExercisesPage: React.FC = () => {
     });
   };
 
+  // CAMBIO: La función que llama a la API ahora es un async/await directo
   const handleSubmit = useCallback(async () => {
     if (!currentScenario || selectedStepIds.size === 0 || !justification.trim()) return;
 
     resetGemini();
+    setIsLoadingGemini(true);
 
     const selectedStepsDescriptions = currentScenario.steps
         .filter(step => selectedStepIds.has(step.id))
         .map(step => step.description);
 
+    // El prompt se mantiene igual, es excelente.
     const prompt = `
       Eres un consultor experto en optimización de procesos y automatización (RPA, Workflows). Estás evaluando el análisis de un estudiante sobre un proceso de negocio.
 
@@ -127,9 +136,19 @@ const AutomationExercisesPage: React.FC = () => {
       - Concluye con una visión más amplia, quizás mencionando qué tipo de tecnologías (como RPA para data entry, o software de workflow para aprobaciones) podrían aplicarse. El tono debe ser el de un mentor experto.
     `;
 
-    await fetchGeminiFeedback(prompt, 'Eres un consultor experto en automatización de procesos, evaluando el análisis de un estudiante.');
-  }, [currentScenario, selectedStepIds, justification, fetchGeminiFeedback, resetGemini]);
+    try {
+      // Llamada directa a nuestro servicio
+      const feedback = await generateContent(prompt);
+      setGeminiFeedback(feedback);
+    } catch (error) {
+      console.error("Error en handleSubmit:", error);
+      setGeminiError(error instanceof Error ? error.message : "Ocurrió un error desconocido.");
+    } finally {
+      setIsLoadingGemini(false);
+    }
+  }, [currentScenario, selectedStepIds, justification, resetGemini]);
 
+  // El JSX se mantiene casi idéntico.
   return (
     <PageWrapper title="Ejercicios de Automatización de Tareas" titleIcon={<AutomationIcon />} subtitle="Identifica ineficiencias y propone soluciones de automatización en procesos reales.">
       <InteractiveModule
@@ -178,7 +197,6 @@ const AutomationExercisesPage: React.FC = () => {
                     onChange={(e) => setJustification(e.target.value)}
                     className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
                     placeholder="Explica por qué elegiste estos pasos. ¿Qué beneficios traerá la automatización (ahorro de tiempo, reducción de errores, etc.)?"
-                    onPaste={(e) => e.preventDefault()}
                     disabled={isLoadingGemini || isRecording}
                   />
                   <Button
@@ -187,7 +205,7 @@ const AutomationExercisesPage: React.FC = () => {
                       size="sm"
                       className="absolute top-2 right-2 !p-2 h-8 w-8"
                       aria-label={isRecording ? 'Detener grabación' : 'Grabar justificación por voz'}
-                      disabled={!recognitionRef.current}
+                      disabled={!recognitionRef.current || isLoadingGemini}
                   >
                       {isRecording ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
                   </Button>
@@ -209,7 +227,7 @@ const AutomationExercisesPage: React.FC = () => {
 
         {isLoadingGemini && <div className="my-6"><LoadingSpinner text="Generando análisis experto..." /></div>}
 
-        {geminiError && (
+        {geminiError && !isLoadingGemini && (
           <Card className="my-6 bg-red-50 border-red-500">
             <div className="flex items-center text-red-700">
               <XCircleIcon className="w-6 h-6 mr-2" />
@@ -225,7 +243,7 @@ const AutomationExercisesPage: React.FC = () => {
               Análisis de tu Propuesta de Automatización
             </h4>
             <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">
-              <p>{geminiFeedback}</p>
+              <div>{geminiFeedback}</div>
             </div>
             <p className="mt-3 text-xs text-neutral-500 italic">Este análisis te ayudará a desarrollar un ojo crítico para la optimización de procesos.</p>
           </Card>

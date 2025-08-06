@@ -4,6 +4,7 @@ import Card from '../components/ui/Card';
 import { AcademicCapIcon } from '../constants';
 import { Link } from 'react-router-dom';
 
+// Datos del mapa curricular. Esta estructura es correcta para su propósito.
 const curriculumData = [
     {
         mainTopic: 'Introducción a la administración y las Organizaciones',

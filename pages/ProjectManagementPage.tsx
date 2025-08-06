@@ -1,15 +1,17 @@
-
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio
+
+// Componentes y Constantes
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
 import { ProjectManagementIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
 import { ProjectSimulation, ProjectTask, SpeechRecognition } from '../types';
 import { PROJECT_SIMULATIONS } from '../constants';
 
+// --- TIPOS Y COMPONENTES LOCALES ---
 type TaskStatus = 'Por Hacer' | 'En Progreso' | 'Hecho';
 type Statuses = Record<string, TaskStatus>;
 
@@ -27,7 +29,7 @@ const TaskCard: React.FC<{ task: ProjectTask; status: TaskStatus; onStatusChange
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${priorityColors[task.priority]}`}>{task.priority}</span>
                 <span className="text-neutral-500">{task.estimatedHours} horas</span>
             </div>
-             <div className="flex justify-end space-x-2 pt-2">
+            <div className="flex justify-end space-x-2 pt-2">
                 {(['Por Hacer', 'En Progreso', 'Hecho'] as TaskStatus[]).map(s => (
                     s !== status && <Button key={s} size="sm" variant="outline" onClick={() => onStatusChange(task.id, s)} disabled={disabled}>{s}</Button>
                 ))}
@@ -60,18 +62,17 @@ const ProjectManagementPage: React.FC = () => {
     const [taskStatuses, setTaskStatuses] = useState<Statuses>({});
     const [userPlan, setUserPlan] = useState('');
     
-    const {
-        data: geminiFeedback,
-        error: geminiError,
-        isLoading: isLoadingGemini,
-        executeQuery: fetchGeminiFeedback,
-        reset: resetGemini,
-    } = useGeminiTextQuery();
+    // CAMBIO: Estados locales para manejar la llamada a la API
+    const [geminiFeedback, setGeminiFeedback] = useState<string | null>(null);
+    const [geminiError, setGeminiError] = useState<string | null>(null);
+    const [isLoadingGemini, setIsLoadingGemini] = useState<boolean>(false);
 
+    // Speech-to-text state
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const [isRecording, setIsRecording] = useState(false);
     const [speechError, setSpeechError] = useState<string | null>(null);
 
+    // Speech-to-text setup (sin cambios)
     useEffect(() => {
         const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognitionAPI) {
@@ -86,7 +87,7 @@ const ProjectManagementPage: React.FC = () => {
                 setUserPlan(prev => prev ? `${prev} ${transcript}` : transcript);
                 setSpeechError(null);
             };
-            recognition.onerror = (event) => setSpeechError(`Error: ${event.error}. Por favor, escribe.`);
+            recognition.onerror = (event) => setSpeechError(`Error en reconocimiento: ${event.error}. Por favor, escribe.`);
             recognition.onend = () => setIsRecording(false);
         }
         return () => {
@@ -107,6 +108,12 @@ const ProjectManagementPage: React.FC = () => {
         }
         setIsRecording(!isRecording);
     };
+    
+    const resetGemini = useCallback(() => {
+        setGeminiFeedback(null);
+        setGeminiError(null);
+        setIsLoadingGemini(false);
+    }, []);
 
     const loadNewProject = useCallback(() => {
         if(isRecording) handleToggleRecording();
@@ -145,8 +152,9 @@ const ProjectManagementPage: React.FC = () => {
 
     const handleSubmit = useCallback(async () => {
         if (!currentProject || !userPlan.trim()) return;
-
+        
         resetGemini();
+        setIsLoadingGemini(true);
         
         const statusReport = currentProject.tasks.map(t => `- ${t.name}: ${taskStatuses[t.id]}`).join('\n');
 
@@ -167,20 +175,25 @@ const ProjectManagementPage: React.FC = () => {
             "${userPlan}"
 
             Por favor, evalúa el enfoque de gestión del estudiante. Considera lo siguiente:
-            1.  **Priorización y Secuenciación:** ¿El estudiante ha comenzado a trabajar ('En Progreso') en las tareas de alta prioridad primero? ¿El orden de las tareas tiene sentido lógico? (p. ej., no se puede configurar anuncios si no hay contenido).
-            2.  **Gestión del Flujo de Trabajo (WIP):** ¿Hay demasiadas tareas 'En Progreso' a la vez? Esto podría indicar una falta de enfoque. Un buen WIP (Work In Progress) es clave.
-            3.  **Alineación con el Plan:** ¿El plan de acción escrito por el estudiante es coherente con el estado de las tareas que ha establecido en el tablero?
-            4.  **Mecanismo de Control:** ¿Cómo funciona el plan y el tablero Kanban del estudiante como una herramienta de control del proyecto? ¿Permite monitorear el progreso y tomar acciones correctivas?
-            5.  **Realismo y Riesgos:** ¿El plan del estudiante es realista? ¿Menciona posibles riesgos o dependencias que tú, como experto, puedes identificar?
+            1.  **Priorización y Secuenciación:** ¿El estudiante ha comenzado a trabajar ('En Progreso') en las tareas de alta prioridad primero? ¿El orden de las tareas tiene sentido lógico?
+            2.  **Gestión del Flujo de Trabajo (WIP):** ¿Hay demasiadas tareas 'En Progreso' a la vez? Esto podría indicar una falta de enfoque.
+            3.  **Alineación con el Plan:** ¿El plan de acción escrito es coherente con el estado de las tareas en el tablero?
+            4.  **Mecanismo de Control:** ¿Cómo funciona el plan y el tablero Kanban como una herramienta de control del proyecto?
+            5.  **Realismo y Riesgos:** ¿El plan del estudiante es realista? ¿Menciona posibles riesgos o dependencias?
 
-            Proporciona retroalimentación constructiva en 2-4 párrafos:
-            - Comienza reconociendo los aciertos en su planificación.
-            - Luego, ofrece consejos específicos sobre priorización, gestión del WIP y cómo su plan actúa como un mecanismo de control.
-            - Finalmente, da una recomendación general para mejorar su enfoque como gestor de proyectos. Tu tono debe ser el de un mentor que guía.
+            Proporciona retroalimentación constructiva en 2-4 párrafos, manteniendo un tono de mentor que guía.
         `;
 
-        await fetchGeminiFeedback(prompt, 'Eres un Director de Proyectos PMP, evaluando el plan de un estudiante.');
-    }, [currentProject, taskStatuses, userPlan, fetchGeminiFeedback, resetGemini]);
+        try {
+            const feedback = await generateContent(prompt);
+            setGeminiFeedback(feedback);
+        } catch (e) {
+            console.error("Error al enviar plan de proyecto:", e);
+            setGeminiError(e instanceof Error ? e.message : "Ocurrió un error al obtener la retroalimentación.");
+        } finally {
+            setIsLoadingGemini(false);
+        }
+    }, [currentProject, taskStatuses, userPlan, resetGemini]);
 
     return (
         <PageWrapper title="Gestión de Proyectos Simulada" titleIcon={<ProjectManagementIcon />} subtitle="Organiza, prioriza y ejecuta proyectos. Desarrolla tu visión de gestor.">
@@ -218,23 +231,22 @@ const ProjectManagementPage: React.FC = () => {
                                     onChange={(e) => setUserPlan(e.target.value)}
                                     className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
                                     placeholder="Describe tu estrategia. ¿Por qué comenzaste con esas tareas? ¿Cuáles son los próximos pasos críticos? ¿Qué riesgos anticipas?"
-                                    onPaste={(e) => e.preventDefault()}
                                     disabled={isLoadingGemini || isRecording}
                                 />
                                 <Button
                                     onClick={handleToggleRecording}
                                     variant="outline"
-                                    size="sm"
-                                    className="absolute top-2 right-2 !p-2 h-8 w-8"
+                                    size="icon"
+                                    className="absolute top-2 right-2 h-8 w-8"
                                     aria-label={isRecording ? 'Detener grabación' : 'Grabar plan por voz'}
-                                    disabled={!recognitionRef.current}
+                                    disabled={!recognitionRef.current || isLoadingGemini}
                                 >
-                                    {isRecording ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
+                                    {isRecording ? <StopCircleIcon className="w-5 h-5 text-red-500" /> : <MicrophoneIcon className="w-5 h-5" />}
                                 </Button>
                             </div>
                             {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
                             {isRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
-                             <Button
+                            <Button
                                 onClick={handleSubmit}
                                 disabled={isLoadingGemini || !userPlan.trim() || isRecording}
                                 isLoading={isLoadingGemini}
@@ -248,7 +260,7 @@ const ProjectManagementPage: React.FC = () => {
 
                 {isLoadingGemini && <div className="my-6"><LoadingSpinner text="Generando feedback del experto..." /></div>}
 
-                {geminiError && (
+                {geminiError && !isLoadingGemini && (
                     <Card className="my-6 bg-red-50 border-red-500">
                         <div className="flex items-center text-red-700">
                         <XCircleIcon className="w-6 h-6 mr-2" />

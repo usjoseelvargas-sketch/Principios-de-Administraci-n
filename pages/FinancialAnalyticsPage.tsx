@@ -1,14 +1,16 @@
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio único
+
+// Componentes y Constantes
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
 import { AnalyticsIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon, ChevronRightIcon } from '../constants';
-import { useGeminiJsonQuery, useGeminiTextQuery } from '../hooks/useGeminiQuery';
 import { SpeechRecognition } from '../types';
 
+// Definición de la estructura del problema
 interface FinancialProblemData {
   problemType: string;
   statement: string;
@@ -26,26 +28,18 @@ const FinancialAnalyticsPage: React.FC = () => {
   const [userAnswer, setUserAnswer] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const { 
-    data: problemData, 
-    error: problemError, 
-    isLoading: isLoadingProblem, 
-    executeQuery: fetchProblem,
-    reset: resetProblem
-  } = useGeminiJsonQuery<FinancialProblemData>();
+  // CAMBIO: Estados locales para manejar las dos llamadas a la API de forma independiente
+  const [isLoadingProblem, setIsLoadingProblem] = useState(false);
+  const [problemError, setProblemError] = useState<string | null>(null);
+  const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
-  const { 
-    data: feedbackData, 
-    error: feedbackError, 
-    isLoading: isLoadingFeedback, 
-    executeQuery: fetchFeedback,
-    reset: resetFeedback
-  } = useGeminiTextQuery();
-
+  // Speech-to-text state
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
 
+  // Speech-to-text setup (sin cambios)
   useEffect(() => {
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognitionAPI) {
@@ -60,14 +54,8 @@ const FinancialAnalyticsPage: React.FC = () => {
             setUserAnswer(prev => prev ? `${prev} ${transcript}` : transcript);
             setSpeechError(null);
         };
-
-        recognition.onerror = (event) => {
-            setSpeechError(`Error de reconocimiento: ${event.error}. Por favor, escribe tu respuesta.`);
-        };
-        
-        recognition.onend = () => {
-            setIsRecording(false);
-        };
+        recognition.onerror = (event) => setSpeechError(`Error de reconocimiento: ${event.error}. Por favor, escribe tu respuesta.`);
+        recognition.onend = () => setIsRecording(false);
     }
 
     return () => {
@@ -92,16 +80,18 @@ const FinancialAnalyticsPage: React.FC = () => {
       setIsRecording(!isRecording);
   };
 
-  const handleGenerateProblem = useCallback(() => {
-    resetProblem();
-    resetFeedback();
+  const handleGenerateProblem = useCallback(async () => {
+    // Limpiar estados anteriores
     setProblem(null);
+    setProblemError(null);
     setUserAnswer('');
     setFeedback(null);
+    setFeedbackError(null);
     setIsTheoryVisible(false);
-    if (isRecording) {
-        handleToggleRecording();
-    }
+    if (isRecording) handleToggleRecording();
+
+    setIsLoadingProblem(true);
+
     const prompt = `
       Genera un problema financiero para un estudiante de administración de pregrado. El problema debe requerir un cálculo y una decisión.
       Devuelve la respuesta EXCLUSIVAMENTE en formato JSON con la siguiente estructura:
@@ -117,25 +107,34 @@ const FinancialAnalyticsPage: React.FC = () => {
       }
       Asegúrate de que el JSON sea válido y completo, sin texto adicional antes o después del JSON.
     `;
-    fetchProblem(prompt, "Eres un tutor de finanzas que crea problemas prácticos con explicaciones teóricas.");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchProblem, isRecording]);
-  
-  useEffect(() => {
-    if (problemData) {
-      if (problemData.statement && problemData.theory?.formula) {
-        setProblem(problemData);
-      } else {
-        console.error("Received invalid JSON structure from AI, retrying:", problemData);
-        handleGenerateProblem();
-      }
-    }
-  }, [problemData, handleGenerateProblem]);
+    
+    try {
+      const responseText = await generateContent(prompt);
+      const cleanedJsonString = responseText.replace(/```json|```/g, '').trim();
+      const newProblem = JSON.parse(cleanedJsonString);
 
+      // Validar la estructura del JSON recibido
+      if (newProblem.statement && newProblem.theory?.formula) {
+        setProblem(newProblem);
+      } else {
+        throw new Error("La IA devolvió un JSON con una estructura incorrecta.");
+      }
+    } catch (e) {
+        console.error("Error al generar problema:", e);
+        setProblemError(e instanceof Error ? e.message : "No se pudo generar el problema.");
+    } finally {
+        setIsLoadingProblem(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording]);
+  
   const handleSubmitAnswer = useCallback(async () => {
     if (!problem || !userAnswer) return;
-    resetFeedback();
+    
     setFeedback(null);
+    setFeedbackError(null);
+    setIsLoadingFeedback(true);
+
     const prompt = `
       Un estudiante recibió el siguiente problema financiero sobre ${problem.problemType}: "${problem.statement}"
       La respuesta del estudiante fue: "${userAnswer}"
@@ -145,24 +144,26 @@ const FinancialAnalyticsPage: React.FC = () => {
       Proporciona comentarios generales sobre su posible proceso de pensamiento o errores comunes, considerando la fórmula: ${problem.theory.formula}.
       Si la respuesta es textual, comenta su claridad o enfoque. Sé constructivo.
     `;
-    await fetchFeedback(prompt, "Eres un tutor de finanzas que proporciona retroalimentación sobre las respuestas de los estudiantes.");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [problem, userAnswer, fetchFeedback]);
 
-  useEffect(() => {
-    if (feedbackData) {
-      setFeedback(feedbackData);
+    try {
+        const responseText = await generateContent(prompt);
+        setFeedback(responseText);
+    } catch (e) {
+        console.error("Error al obtener retroalimentación:", e);
+        setFeedbackError(e instanceof Error ? e.message : "No se pudo obtener la retroalimentación.");
+    } finally {
+        setIsLoadingFeedback(false);
     }
-  }, [feedbackData]);
+  }, [problem, userAnswer]);
 
   return (
     <PageWrapper title="Análisis Financiero y Toma de Decisiones" titleIcon={<AnalyticsIcon />}>
       <InteractiveModule
         title="Resolución de Problemas Financieros con IA"
         icon={<LightbulbIcon className="w-6 h-6" />}
-        initialInstructions="Haz clic en 'Generar Problema' para recibir un ejercicio financiero de la IA. Revisa la teoría si es necesario, resuélvelo y envía tu respuesta para obtener retroalimentación."
+        initialInstructions="Haz clic en 'Generar Problema' para recibir un ejercicio financiero. Revisa la teoría si es necesario, resuélvelo y envía tu respuesta para obtener retroalimentación."
       >
-        <Button onClick={handleGenerateProblem} disabled={isLoadingProblem} isLoading={isLoadingProblem} className="mb-6">
+        <Button onClick={handleGenerateProblem} disabled={isLoadingProblem || isLoadingFeedback} isLoading={isLoadingProblem} className="mb-6">
           {isLoadingProblem ? 'Generando Problema...' : 'Generar Nuevo Problema Financiero'}
         </Button>
 
@@ -182,7 +183,6 @@ const FinancialAnalyticsPage: React.FC = () => {
             <h4 className="text-lg font-semibold text-neutral-800 mb-2">Problema Propuesto: {problem.problemType}</h4>
             <p className="text-neutral-700 whitespace-pre-wrap mb-4">{problem.statement}</p>
             
-            {/* Theory Section */}
             <div className="bg-neutral-50 rounded-lg border border-neutral-200">
                 <button
                     onClick={() => setIsTheoryVisible(!isTheoryVisible)}
@@ -211,7 +211,7 @@ const FinancialAnalyticsPage: React.FC = () => {
               <label htmlFor="user-answer" className="block text-sm font-medium text-neutral-700 mb-1">
                 Tu Respuesta:
               </label>
-               <div className="relative w-full">
+              <div className="relative w-full">
                 <textarea
                   id="user-answer"
                   rows={4}
@@ -219,24 +219,23 @@ const FinancialAnalyticsPage: React.FC = () => {
                   onChange={(e) => setUserAnswer(e.target.value)}
                   className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
                   placeholder="Ingresa tu solución o análisis aquí..."
-                  onPaste={(e) => e.preventDefault()}
-                  disabled={isRecording}
+                  disabled={isRecording || isLoadingFeedback}
                 />
                 <Button
                     onClick={handleToggleRecording}
                     variant="outline"
-                    size="sm"
-                    className="absolute top-2 right-2 !p-2 h-8 w-8"
+                    size="icon"
+                    className="absolute top-2 right-2 h-8 w-8"
                     aria-label={isRecording ? 'Detener grabación' : 'Grabar respuesta por voz'}
-                    disabled={!recognitionRef.current}
+                    disabled={!recognitionRef.current || isLoadingFeedback}
                 >
                     {isRecording ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
                 </Button>
               </div>
-               {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
-               {isRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
+              {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
+              {isRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
             </div>
-            <Button onClick={handleSubmitAnswer} disabled={isLoadingFeedback || !userAnswer} isLoading={isLoadingFeedback} className="mt-4">
+            <Button onClick={handleSubmitAnswer} disabled={isLoadingFeedback || !userAnswer || isLoadingProblem} isLoading={isLoadingFeedback} className="mt-4">
               {isLoadingFeedback ? 'Evaluando...' : 'Enviar Respuesta y Obtener Retroalimentación'}
             </Button>
           </Card>
@@ -260,7 +259,7 @@ const FinancialAnalyticsPage: React.FC = () => {
                 Retroalimentación de la IA:
             </h4>
             <p className="text-neutral-700 whitespace-pre-wrap">{feedback}</p>
-            <p className="mt-3 text-xs text-neutral-500 italic">Esta retroalimentación es generada por IA y tiene fines educativos. No sustituye la revisión de un instructor calificado.</p>
+            <p className="mt-3 text-xs text-neutral-500 italic">Esta retroalimentación tiene fines educativos. No sustituye la revisión de un instructor calificado.</p>
           </Card>
         )}
       </InteractiveModule>

@@ -1,19 +1,22 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio
+
+// Componentes y Constantes
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
 import { SwotIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
 import { SwotScenario, SpeechRecognition } from '../types';
 import { SWOT_SCENARIOS } from '../constants';
 
+// --- TIPOS Y CONSTANTES LOCALES ---
 interface SwotInputs {
-  strengths: string;
-  weaknesses: string;
-  opportunities: string;
-  threats: string;
+    strengths: string;
+    weaknesses: string;
+    opportunities: string;
+    threats: string;
 }
 
 const quadrantLabels: Record<keyof SwotInputs, { title: string, subtitle: string, color: string }> = {
@@ -27,18 +30,17 @@ const SwotAnalysisPage: React.FC = () => {
     const [currentScenario, setCurrentScenario] = useState<SwotScenario | null>(null);
     const [swotInputs, setSwotInputs] = useState<SwotInputs>({ strengths: '', weaknesses: '', opportunities: '', threats: '' });
 
-    const {
-        data: geminiFeedback,
-        error: geminiError,
-        isLoading: isLoadingGemini,
-        executeQuery: fetchGeminiFeedback,
-        reset: resetGemini,
-    } = useGeminiTextQuery();
+    // CAMBIO: Estados locales para manejar la llamada a la API
+    const [geminiFeedback, setGeminiFeedback] = useState<string | null>(null);
+    const [geminiError, setGeminiError] = useState<string | null>(null);
+    const [isLoadingGemini, setIsLoadingGemini] = useState<boolean>(false);
 
+    // Speech-to-text state
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const [recordingField, setRecordingField] = useState<keyof SwotInputs | null>(null);
     const [speechError, setSpeechError] = useState<string | null>(null);
 
+    // Speech-to-text setup (sin cambios)
     useEffect(() => {
         const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognitionAPI) {
@@ -55,7 +57,7 @@ const SwotAnalysisPage: React.FC = () => {
                 }
                 setSpeechError(null);
             };
-            recognition.onerror = (event) => setSpeechError(`Error: ${event.error}. Por favor, escribe.`);
+            recognition.onerror = (event) => setSpeechError(`Error en reconocimiento: ${event.error}. Por favor, escribe.`);
             recognition.onend = () => setRecordingField(null);
         }
         return () => {
@@ -78,10 +80,17 @@ const SwotAnalysisPage: React.FC = () => {
         }
     };
 
+    const resetGemini = useCallback(() => {
+        setGeminiFeedback(null);
+        setGeminiError(null);
+        setIsLoadingGemini(false);
+    }, []);
+
     const loadNewScenario = useCallback(() => {
         if (recordingField) recognitionRef.current?.stop();
         resetGemini();
         setSwotInputs({ strengths: '', weaknesses: '', opportunities: '', threats: '' });
+        setSpeechError(null);
         const randomIndex = Math.floor(Math.random() * SWOT_SCENARIOS.length);
         setCurrentScenario(SWOT_SCENARIOS[randomIndex]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,6 +110,7 @@ const SwotAnalysisPage: React.FC = () => {
         if (!currentScenario || !isFormComplete) return;
 
         resetGemini();
+        setIsLoadingGemini(true);
 
         const prompt = `
             Eres un consultor experto en estrategia de negocios y un coach académico. Estás evaluando un análisis DOFA (Fortalezas, Oportunidades, Debilidades, Amenazas) realizado por un estudiante.
@@ -110,17 +120,10 @@ const SwotAnalysisPage: React.FC = () => {
             **Descripción:** "${currentScenario.scenario}"
 
             ### Análisis DOFA del Estudiante:
-            **Fortalezas (Internas, Positivas):**
-            ${swotInputs.strengths || "No proporcionadas"}
-
-            **Debilidades (Internas, Negativas):**
-            ${swotInputs.weaknesses || "No proporcionadas"}
-
-            **Oportunidades (Externas, Positivas):**
-            ${swotInputs.opportunities || "No proporcionadas"}
-
-            **Amenazas (Externas, Negativas):**
-            ${swotInputs.threats || "No proporcionadas"}
+            **Fortalezas (Internas, Positivas):** ${swotInputs.strengths || "No proporcionadas"}
+            **Debilidades (Internas, Negativas):** ${swotInputs.weaknesses || "No proporcionadas"}
+            **Oportunidades (Externas, Positivas):** ${swotInputs.opportunities || "No proporcionadas"}
+            **Amenazas (Externas, Negativas):** ${swotInputs.threats || "No proporcionadas"}
 
             ### Tu Tarea de Evaluación:
             Proporciona una retroalimentación detallada y constructiva usando **exactamente** los siguientes encabezados en formato Markdown (iniciando con \`###\`).
@@ -142,15 +145,24 @@ const SwotAnalysisPage: React.FC = () => {
             - ¿Pasó por alto alguna amenaza importante?
 
             ### Comprensión General (Interno vs. Externo)
-            - Evalúa si el estudiante comprende la diferencia fundamental entre los factores internos (Fortalezas, Debilidades) y los factores externos (Oportunidades, Amenazas). Comenta sobre cualquier punto que esté mal clasificado.
+            - Evalúa si el estudiante comprende la diferencia fundamental entre factores internos (Fortalezas, Debilidades) y externos (Oportunidades, Amenazas). Comenta sobre cualquier punto mal clasificado.
 
             ### Conclusión y Siguiente Paso Estratégico
-            - Resume tu análisis y sugiere cuál podría ser el siguiente paso. Por ejemplo, "¿Cómo se pueden usar las fortalezas para aprovechar las oportunidades (Estrategias FO)?" o "¿Cómo se pueden usar las fortalezas para mitigar las amenazas (Estrategias FA)?". Mantén esta parte breve y como una pregunta para fomentar el pensamiento estratégico.
+            - Resume tu análisis y sugiere cuál podría ser el siguiente paso. Por ejemplo, "¿Cómo se pueden usar las fortalezas para aprovechar las oportunidades (Estrategias FO)?" o "¿Cómo se pueden usar las fortalezas para mitigar las amenazas (Estrategias FA)?". Sé breve y fomenta el pensamiento estratégico.
 
             Mantén un tono de mentor, positivo y educativo.
         `;
-        await fetchGeminiFeedback(prompt, 'Eres un consultor experto en estrategia, evaluando un análisis DOFA.');
-    }, [currentScenario, swotInputs, fetchGeminiFeedback, resetGemini, isFormComplete]);
+        
+        try {
+            const feedback = await generateContent(prompt);
+            setGeminiFeedback(feedback);
+        } catch (e) {
+            console.error("Error al enviar análisis DOFA:", e);
+            setGeminiError(e instanceof Error ? e.message : "Ocurrió un error al obtener la retroalimentación.");
+        } finally {
+            setIsLoadingGemini(false);
+        }
+    }, [currentScenario, swotInputs, resetGemini, isFormComplete]);
     
     const formattedFeedback = (text: string) => text.split('### ').map((section, index) => {
         if (index === 0 && section.trim() === '') return null;
@@ -159,12 +171,12 @@ const SwotAnalysisPage: React.FC = () => {
         const content = lines.join('\n').trim();
         if (!title) return <p key={index} className="whitespace-pre-wrap">{content}</p>;
         return (
-          <div key={index} className="mb-4">
-            <h4 className="text-md font-semibold text-primary mb-1">{title}</h4>
-            <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">{content}</div>
-          </div>
+            <div key={index} className="mb-4">
+                <h4 className="text-md font-semibold text-primary mb-1">{title}</h4>
+                <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">{content}</div>
+            </div>
         );
-      });
+    });
 
     return (
         <PageWrapper title="Análisis Estratégico DOFA (SWOT)" titleIcon={<SwotIcon />} subtitle="Aprende a diagnosticar una situación de negocio identificando factores internos y externos.">
@@ -200,17 +212,16 @@ const SwotAnalysisPage: React.FC = () => {
                                                 onChange={(e) => handleInputChange(key, e.target.value)}
                                                 className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
                                                 placeholder={`Enumera las ${title.toLowerCase()} aquí...`}
-                                                onPaste={(e) => e.preventDefault()}
                                                 disabled={isLoadingGemini || !!recordingField}
                                             />
                                             <Button
                                                 onClick={() => handleToggleRecording(key)}
-                                                variant="outline" size="sm"
-                                                className="absolute top-2 right-2 !p-2 h-8 w-8"
+                                                variant="outline" size="icon"
+                                                className="absolute top-2 right-2 h-8 w-8"
                                                 aria-label={recordingField === key ? `Detener grabación para ${title}` : `Grabar ${title} por voz`}
-                                                disabled={!recognitionRef.current}
+                                                disabled={!recognitionRef.current || (isLoadingGemini && recordingField !== key)}
                                             >
-                                                {recordingField === key ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
+                                                {recordingField === key ? <StopCircleIcon className="w-5 h-5 text-red-500" /> : <MicrophoneIcon className="w-5 h-5" />}
                                             </Button>
                                         </div>
                                     </Card>
@@ -234,7 +245,7 @@ const SwotAnalysisPage: React.FC = () => {
                 
                 {isLoadingGemini && <div className="my-6"><LoadingSpinner text="Generando retroalimentación estratégica..." /></div>}
 
-                {geminiError && (
+                {geminiError && !isLoadingGemini && (
                     <Card className="my-6 bg-red-50 border-red-500">
                         <div className="flex items-center text-red-700">
                             <XCircleIcon className="w-6 h-6 mr-2" />

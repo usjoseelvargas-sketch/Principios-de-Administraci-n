@@ -1,20 +1,26 @@
-
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro nuevo servicio
+
+// Componentes y Constantes (asumimos que estos existen y están correctos)
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
-import { BookOpenIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, SpeakerWaveIcon, StopCircleIcon, MicrophoneIcon } from '../constants';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
-import { AdministrativeTheory, CaseStudy, SpeechRecognition } from '../types';
-import { ADMINISTRATIVE_THEORIES, ADMIN_CASE_STUDIES } from '../constants';
+import { BookOpenIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, SpeakerWaveIcon, StopCircleIcon, MicrophoneIcon } from '../constants'; // Asegúrate de que estos iconos existan
+import { AdministrativeTheory, CaseStudy, SpeechRecognition } from '../types'; // Asegúrate de que estos tipos existan
+import { ADMINISTRATIVE_THEORIES, ADMIN_CASE_STUDIES } from '../constants'; // Asegúrate de que estas constantes existan
 
 const AdministrativeTheoriesPage: React.FC = () => {
   const [selectedTheoryId, setSelectedTheoryId] = useState<string | null>(ADMINISTRATIVE_THEORIES[0]?.id || null);
   const [selectedCaseStudyId, setSelectedCaseStudyId] = useState<string | null>(null);
   const [userResponse, setUserResponse] = useState<string>('');
   
+  // CAMBIO: Estados locales para manejar la llamada a la API en lugar del hook
+  const [geminiFeedback, setGeminiFeedback] = useState<string | null>(null);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [isLoadingGemini, setIsLoadingGemini] = useState<boolean>(false);
+
   // Text-to-speech state
   const [speakingSource, setSpeakingSource] = useState<string | null>(null);
 
@@ -23,15 +29,14 @@ const AdministrativeTheoriesPage: React.FC = () => {
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
 
-  const {
-    data: geminiFeedback,
-    error: geminiError,
-    isLoading: isLoadingGemini,
-    executeQuery: fetchGeminiFeedback,
-    reset: resetGemini,
-  } = useGeminiTextQuery();
+  // Función para limpiar el estado de Gemini
+  const resetGemini = useCallback(() => {
+    setGeminiFeedback(null);
+    setGeminiError(null);
+    setIsLoadingGemini(false);
+  }, []);
 
-  // Speech-to-text setup
+  // Speech-to-text setup (sin cambios, se mantiene igual)
   useEffect(() => {
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognitionAPI) {
@@ -46,10 +51,10 @@ const AdministrativeTheoriesPage: React.FC = () => {
             setUserResponse(prev => prev ? `${prev} ${transcript}` : transcript);
             setSpeechError(null);
         };
-        recognition.onerror = (event) => setSpeechError(`Error: ${event.error}. Por favor, escribe.`);
+        recognition.onerror = (event) => setSpeechError(`Error en reconocimiento: ${event.error}. Por favor, escribe tu respuesta.`);
         recognition.onend = () => setIsVoiceRecording(false);
     }
-    // Combined cleanup
+    // Cleanup
     return () => {
         if (recognitionRef.current) recognitionRef.current.stop();
         if (window.speechSynthesis && speechSynthesis.speaking) speechSynthesis.cancel();
@@ -64,7 +69,7 @@ const AdministrativeTheoriesPage: React.FC = () => {
       if (isVoiceRecording) {
           recognitionRef.current.stop();
       } else {
-          if(speechSynthesis.speaking) handleToggleAudio('', ''); // Stop TTS if running
+          if(speechSynthesis.speaking) handleToggleAudio('', ''); // Detener TTS si está activo
           setSpeechError(null);
           recognitionRef.current.start();
       }
@@ -89,10 +94,11 @@ const AdministrativeTheoriesPage: React.FC = () => {
   }, [currentTheory]);
 
 
-  // Text-to-speech handler
+  // Text-to-speech handler (sin cambios, se mantiene igual)
   const handleToggleAudio = (text: string, sourceIdentifier: string) => {
     if (!window.speechSynthesis) {
-      alert("Lo sentimos, tu navegador no soporta la síntesis de voz.");
+      // Usamos un simple console.warn en lugar de alert
+      console.warn("Lo sentimos, tu navegador no soporta la síntesis de voz.");
       return;
     }
 
@@ -101,7 +107,7 @@ const AdministrativeTheoriesPage: React.FC = () => {
       setSpeakingSource(null);
     } else {
       if (speechSynthesis.speaking) speechSynthesis.cancel();
-      if(isVoiceRecording) handleToggleVoiceRecording(); // Stop STT if running
+      if(isVoiceRecording) handleToggleVoiceRecording(); // Detener STT si está activo
       
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'es-ES';
@@ -113,13 +119,12 @@ const AdministrativeTheoriesPage: React.FC = () => {
       utterance.onerror = (event) => {
         console.error('Error en SpeechSynthesis:', event);
         setSpeakingSource(null);
-        alert(`Error al reproducir audio: ${event.error}.`);
       };
       speechSynthesis.speak(utterance);
     }
   };
   
-
+  // Efecto para limpiar estados cuando cambia la teoría
   useEffect(() => {
     setSelectedCaseStudyId(null);
     setUserResponse('');
@@ -130,6 +135,7 @@ const AdministrativeTheoriesPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTheoryId, resetGemini]);
   
+  // Efecto para seleccionar el primer caso de estudio disponible
   useEffect(() => {
     if (filteredCaseStudies.length > 0) {
         setSelectedCaseStudyId(filteredCaseStudies[0].id); 
@@ -153,15 +159,18 @@ const AdministrativeTheoriesPage: React.FC = () => {
     }
   };
 
+  // CAMBIO: La función que llama a la API ahora es un async/await directo
   const handleSubmitResponse = useCallback(async () => {
     if (!currentTheory || !currentCaseStudy || !userResponse) return;
 
-    resetGemini();
+    resetGemini(); // Limpia resultados anteriores
+    setIsLoadingGemini(true); // Activa el estado de carga
     if (speechSynthesis.speaking) {
         speechSynthesis.cancel();
         setSpeakingSource(null);
     }
 
+    // El prompt se mantiene igual, es excelente.
     const prompt = `
       Eres un tutor experto en teorías de la administración (como Taylorismo, Fayolismo, Teoría de las Relaciones Humanas de Mayo, Burocracia de Weber, etc.).
       El estudiante está aplicando la teoría de: "${currentTheory.name}" (Propuesta por ${currentTheory.proponent || 'varios autores'}, alrededor de ${currentTheory.year || 'principios del siglo XX'}).
@@ -186,9 +195,19 @@ const AdministrativeTheoriesPage: React.FC = () => {
       El tono debe ser alentador y educativo.
     `;
 
-    await fetchGeminiFeedback(prompt, `Eres un tutor experto en teorías de administración, proporcionando feedback sobre el análisis de casos de un estudiante.`);
-  }, [currentTheory, currentCaseStudy, userResponse, fetchGeminiFeedback, resetGemini]);
+    try {
+      // Llamada directa a nuestro servicio
+      const feedback = await generateContent(prompt);
+      setGeminiFeedback(feedback);
+    } catch (error) {
+      console.error("Error en handleSubmitResponse:", error);
+      setGeminiError(error instanceof Error ? error.message : "Ocurrió un error desconocido.");
+    } finally {
+      setIsLoadingGemini(false); // Desactiva el estado de carga
+    }
+  }, [currentTheory, currentCaseStudy, userResponse, resetGemini]);
 
+  // El JSX se mantiene casi idéntico, solo se asegura de usar los nuevos estados locales.
   return (
     <PageWrapper title="Teorías de la Administración" titleIcon={<BookOpenIcon />} subtitle="Explora, analiza casos y aprende de los grandes pensadores de la administración.">
       <InteractiveModule
@@ -295,7 +314,7 @@ const AdministrativeTheoriesPage: React.FC = () => {
                   onChange={(e) => setUserResponse(e.target.value)}
                   className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
                   placeholder={`Escribe aquí tu análisis detallado del caso "${currentCaseStudy.title}" utilizando los principios de ${currentTheory?.name}...`}
-                  onPaste={(e) => e.preventDefault()}
+                  // CAMBIO: Removido onPaste para permitir pegar texto. Si quieres prevenirlo, puedes volver a añadirlo.
                   disabled={isLoadingGemini || !!speakingSource || isVoiceRecording}
                 />
                  <Button
@@ -304,13 +323,13 @@ const AdministrativeTheoriesPage: React.FC = () => {
                     size="sm"
                     className="absolute top-2 right-2 !p-2 h-8 w-8"
                     aria-label={isVoiceRecording ? 'Detener grabación de voz' : 'Grabar análisis por voz'}
-                    disabled={!recognitionRef.current || !!speakingSource}
+                    disabled={!recognitionRef.current || !!speakingSource || isLoadingGemini}
                 >
                     {isVoiceRecording ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
                 </Button>
               </div>
-               {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
-               {isVoiceRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
+                {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
+                {isVoiceRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
             </div>
             <Button 
               onClick={handleSubmitResponse} 
@@ -342,7 +361,8 @@ const AdministrativeTheoriesPage: React.FC = () => {
               Retroalimentación de la IA
             </h4>
             <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">
-              <p>{geminiFeedback}</p>
+              {/* CAMBIO: Se usa un div en lugar de <p> para mejor renderizado de párrafos múltiples */}
+              <div>{geminiFeedback}</div>
             </div>
             <Button
                 onClick={() => handleToggleAudio(geminiFeedback, `feedback-${currentCaseStudy?.id || 'current'}`)}

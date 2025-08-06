@@ -1,211 +1,216 @@
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio
+
+// Componentes y Constantes
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
-import { HRIcon, LightbulbIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants';
 import Button from '../components/ui/Button';
-import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
-import { SpeechRecognition } from '../types';
-
-
-interface Dilemma {
-    id: string;
-    title: string;
-    scenario: string;
-}
-
-const ethicalDilemmas: Dilemma[] = [
-    {
-        id: 'd1',
-        title: 'Conflicto de Intereses',
-        scenario: 'Eres gerente de compras y un proveedor te ofrece un viaje de lujo "sin compromiso" justo antes de una gran licitación. Sabes que este proveedor es competitivo, pero aceptar el viaje podría ser malinterpretado. ¿Cómo manejas esta situación?'
-    },
-    {
-        id: 'd2',
-        title: 'Privacidad del Empleado vs. Seguridad de la Empresa',
-        scenario: 'Sospechas que un empleado está filtrando información confidencial a la competencia. Tienes la capacidad técnica de monitorear sus comunicaciones personales en dispositivos de la empresa. ¿Es ético hacerlo? ¿Qué pasos tomarías?'
-    },
-    {
-        id: 'd3',
-        title: 'Reducción de Personal con Impacto Social',
-        scenario: 'Tu empresa necesita reducir costos urgentemente. La opción más rápida es despedir al 15% del personal, muchos de ellos con familias y antigüedad. ¿Qué factores éticos considerarías al tomar esta decisión y cómo la comunicarías?'
-    }
-];
+import Card from '../components/ui/Card';
+import { HRIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants';
+import { HrDilemma, SpeechRecognition } from '../types';
+import { HR_DILEMMAS } from '../constants';
 
 const TalentManagementPage: React.FC = () => {
-  const [currentDilemma, setCurrentDilemma] = useState<Dilemma | null>(null);
-  const [userApproach, setUserApproach] = useState('');
-  const { data: geminiCritique, error, isLoading, executeQuery, reset } = useGeminiTextQuery();
-  
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [speechError, setSpeechError] = useState<string | null>(null);
+    const [currentDilemma, setCurrentDilemma] = useState<HrDilemma | null>(null);
+    const [userResponse, setUserResponse] = useState('');
 
-  useEffect(() => {
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognitionAPI) {
-        recognitionRef.current = new SpeechRecognitionAPI();
-        const recognition = recognitionRef.current;
-        recognition.continuous = false;
-        recognition.lang = 'es-ES';
-        recognition.interimResults = false;
+    // CAMBIO: Estados locales para manejar la llamada a la API
+    const [geminiFeedback, setGeminiFeedback] = useState<string | null>(null);
+    const [geminiError, setGeminiError] = useState<string | null>(null);
+    const [isLoadingGemini, setIsLoadingGemini] = useState<boolean>(false);
 
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            setUserApproach(prev => prev ? `${prev} ${transcript}` : transcript);
-            setSpeechError(null);
+    // Speech-to-text state
+    const recognitionRef = useRef<SpeechRecognition | null>(null);
+    const [isRecording, setIsRecording] = useState(false);
+    const [speechError, setSpeechError] = useState<string | null>(null);
+
+    // Speech-to-text setup (sin cambios)
+    useEffect(() => {
+        const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognitionAPI) {
+            recognitionRef.current = new SpeechRecognitionAPI();
+            const recognition = recognitionRef.current;
+            recognition.continuous = false;
+            recognition.lang = 'es-ES';
+            recognition.interimResults = false;
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                setUserResponse(prev => prev ? `${prev} ${transcript}` : transcript);
+                setSpeechError(null);
+            };
+            recognition.onerror = (event) => setSpeechError(`Error en reconocimiento: ${event.error}. Por favor, escribe.`);
+            recognition.onend = () => setIsRecording(false);
+        }
+        return () => {
+            if (recognitionRef.current) recognitionRef.current.stop();
         };
-        recognition.onerror = (event) => setSpeechError(`Error: ${event.error}. Por favor, escribe.`);
-        recognition.onend = () => setIsRecording(false);
-    }
-    return () => {
-        if (recognitionRef.current) recognitionRef.current.stop();
+    }, []);
+
+    const handleToggleRecording = () => {
+        if (!recognitionRef.current) {
+            setSpeechError("El reconocimiento de voz no es compatible con este navegador.");
+            return;
+        }
+        if (isRecording) {
+            recognitionRef.current.stop();
+        } else {
+            setSpeechError(null);
+            recognitionRef.current.start();
+        }
+        setIsRecording(!isRecording);
     };
-  }, []);
 
-  const handleToggleRecording = () => {
-      if (!recognitionRef.current) {
-          setSpeechError("El reconocimiento de voz no es compatible con este navegador.");
-          return;
-      }
-      if (isRecording) {
-          recognitionRef.current.stop();
-      } else {
-          setSpeechError(null);
-          recognitionRef.current.start();
-      }
-      setIsRecording(!isRecording);
-  };
+    const resetGemini = useCallback(() => {
+        setGeminiFeedback(null);
+        setGeminiError(null);
+        setIsLoadingGemini(false);
+    }, []);
 
+    const loadNewDilemma = useCallback(() => {
+        if(isRecording) handleToggleRecording();
+        resetGemini();
+        setUserResponse('');
+        setSpeechError(null);
+        const randomIndex = Math.floor(Math.random() * HR_DILEMMAS.length);
+        setCurrentDilemma(HR_DILEMMAS[randomIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [resetGemini, isRecording]);
 
-  const handleGenerateDilemma = () => {
-    if(isRecording) handleToggleRecording();
-    reset();
-    setUserApproach('');
-    setSpeechError(null);
-    const randomIndex = Math.floor(Math.random() * ethicalDilemmas.length);
-    setCurrentDilemma(ethicalDilemmas[randomIndex]);
-  };
+    useEffect(() => {
+        loadNewDilemma();
+    }, [loadNewDilemma]);
 
-  const handleSubmitApproach = useCallback(() => {
-    if (!currentDilemma || !userApproach) return;
-    const prompt = `
-        Contexto: Un estudiante de administración está analizando un dilema ético en la gestión del talento.
-        Dilema: "${currentDilemma.title}" - ${currentDilemma.scenario}
-        Enfoque propuesto por el estudiante: "${userApproach}"
+    const handleSubmit = useCallback(async () => {
+        if (!currentDilemma || !userResponse.trim()) return;
 
-        Analiza el enfoque del estudiante. Considera:
-        1. Identificación de los principios éticos en juego.
-        2. Posibles consecuencias de su enfoque.
-        3. Alternativas o consideraciones adicionales que podría haber omitido.
-        Proporciona una crítica constructiva en 2-3 párrafos, fomentando la reflexión. No des 'la solución correcta', sino ayuda a pensar más profundamente.
-    `;
-    executeQuery(prompt, "Eres un consejero ético y profesor de administración, guiando a estudiantes en dilemas complejos.");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDilemma, userApproach, executeQuery]);
+        resetGemini();
+        setIsLoadingGemini(true);
 
-  // Set initial dilemma on mount
-  React.useEffect(() => {
-    handleGenerateDilemma();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+        const prompt = `
+            Eres un experimentado Director de Recursos Humanos y un coach de liderazgo ético. Estás evaluando la respuesta de un estudiante a un complejo dilema de gestión de talento.
 
+            Contexto del Dilema:
+            Título: "${currentDilemma.title}"
+            Escenario: "${currentDilemma.scenario}"
+            Pregunta Clave: "${currentDilemma.question}"
 
-  return (
-    <PageWrapper title="Gestión del Talento Humano y Colaboración" titleIcon={<HRIcon />}>
-      <InteractiveModule
-        title="Análisis de Dilemas Éticos en RRHH"
-        icon={<LightbulbIcon className="w-6 h-6" />}
-        initialInstructions="Analiza un dilema ético presentado por la IA, describe tu enfoque para resolverlo y recibe una crítica constructiva."
-      >
-        <Button onClick={handleGenerateDilemma} disabled={isLoading} className="mb-4">
-            Presentar Nuevo Dilema Ético
-        </Button>
+            Respuesta del Estudiante:
+            "${userResponse}"
 
-        {currentDilemma && (
-             <Card className="mb-6 border-l-4 border-purple-500">
-                <h4 className="text-lg font-semibold text-neutral-800 mb-1">Dilema Ético: {currentDilemma.title}</h4>
-                <p className="text-neutral-700">{currentDilemma.scenario}</p>
-                <div className="mt-4">
-                    <label htmlFor="dilemma-approach" className="block text-sm font-medium text-neutral-700 mb-1">
-                        Tu Enfoque Propuesto:
-                    </label>
-                    <div className="relative w-full">
-                        <textarea
-                            id="dilemma-approach"
-                            rows={5}
-                            value={userApproach}
-                            onChange={(e) => setUserApproach(e.target.value)}
-                            className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
-                            placeholder="Describe cómo abordarías esta situación, considerando los aspectos éticos y prácticos..."
-                            onPaste={(e) => e.preventDefault()}
-                            disabled={isLoading || isRecording}
-                        />
-                         <Button
-                            onClick={handleToggleRecording}
-                            variant="outline"
-                            size="sm"
-                            className="absolute top-2 right-2 !p-2 h-8 w-8"
-                            aria-label={isRecording ? 'Detener grabación' : 'Grabar respuesta por voz'}
-                            disabled={!recognitionRef.current}
-                        >
-                            {isRecording ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
-                        </Button>
-                    </div>
-                     {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
-                     {isRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
-                </div>
-                <Button onClick={handleSubmitApproach} disabled={isLoading || !userApproach} isLoading={isLoading} className="mt-3">
-                    {isLoading ? 'Analizando Enfoque...' : 'Enviar Enfoque y Obtener Crítica'}
+            Por favor, evalúa la respuesta del estudiante. Analiza los siguientes aspectos:
+            1.  **Ética y Valores:** ¿La respuesta demuestra una base ética sólida? ¿Considera la justicia, la equidad y el respeto por los individuos?
+            2.  **Visión a Largo Plazo vs. Corto Plazo:** ¿La solución propuesta es un parche rápido o considera las consecuencias a largo plazo para la cultura de la empresa, la moral del equipo y la retención del talento?
+            3.  **Consideración de las Partes Interesadas:** ¿La respuesta tiene en cuenta el impacto en todas las partes involucradas (el empleado, el equipo, la gerencia, la empresa)?
+            4.  **Cumplimiento y Riesgo Legal:** Aunque no eres un abogado, ¿la respuesta parece sensata desde una perspectiva de riesgo laboral básico? ¿Evita decisiones impulsivas que podrían tener consecuencias legales?
+            5.  **Comunicación y Liderazgo:** ¿El plan de acción propuesto demuestra habilidades de comunicación y liderazgo? (Ej: conversaciones difíciles, transparencia, etc.).
+
+            Proporciona una retroalimentación constructiva y profunda en 2-4 párrafos.
+            - Comienza reconociendo la complejidad del dilema y los aspectos positivos del enfoque del estudiante.
+            - Ofrece perspectivas alternativas que el estudiante podría no haber considerado.
+            - Concluye con un principio general de liderazgo o gestión de talento que se pueda extraer de este caso.
+            - Tu tono debe ser el de un mentor sabio y empático.
+        `;
+
+        try {
+            const feedback = await generateContent(prompt);
+            setGeminiFeedback(feedback);
+        } catch (e) {
+            console.error("Error al enviar respuesta de talento:", e);
+            setGeminiError(e instanceof Error ? e.message : "Ocurrió un error al obtener la retroalimentación.");
+        } finally {
+            setIsLoadingGemini(false);
+        }
+    }, [currentDilemma, userResponse, resetGemini]);
+
+    return (
+        <PageWrapper title="Gestión del Talento y Dilemas Éticos" titleIcon={<HRIcon />} subtitle="Enfrenta escenarios complejos de liderazgo, ética y gestión de personas.">
+            <InteractiveModule
+                title="Laboratorio de Liderazgo y RR.HH."
+                icon={<LightbulbIcon className="w-6 h-6" />}
+                initialInstructions="1. Analiza el dilema de gestión de talento. 2. Describe cómo abordarías la situación como líder. 3. Recibe feedback experto sobre las implicaciones de tu decisión."
+            >
+                <Button onClick={loadNewDilemma} disabled={isLoadingGemini || isRecording} className="mb-6">
+                    Generar Nuevo Dilema
                 </Button>
-            </Card>
-        )}
 
-        {isLoading && !geminiCritique && <div className="my-6"><LoadingSpinner text="Procesando..."/></div> }
+                {currentDilemma && (
+                    <Card className="mb-6 border-l-4 border-teal-500">
+                        <h4 className="text-lg font-semibold text-neutral-800 mb-2">{currentDilemma.title}</h4>
+                        <p className="text-neutral-700 mb-4 bg-neutral-100 p-3 rounded-md">{currentDilemma.scenario}</p>
+                        <p className="font-bold text-primary">{currentDilemma.question}</p>
+                    </Card>
+                )}
 
-        {error && (
-            <Card className="mb-6 bg-red-50 border-red-500">
-                <div className="flex items-center text-red-700">
-                    <XCircleIcon className="w-6 h-6 mr-2" />
-                    <p><strong>Error:</strong> {error}</p>
-                </div>
-            </Card>
-        )}
+                {currentDilemma && (
+                    <Card className="mb-6">
+                        <h4 className="text-lg font-semibold text-neutral-800 mb-3">Tu Plan de Acción</h4>
+                        <div>
+                            <label htmlFor="user-response" className="block text-sm font-medium text-neutral-700 mb-1">
+                                ¿Cómo procederías?
+                            </label>
+                            <div className="relative w-full">
+                                <textarea
+                                    id="user-response"
+                                    rows={6}
+                                    value={userResponse}
+                                    onChange={(e) => setUserResponse(e.target.value)}
+                                    className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
+                                    placeholder="Describe los pasos que tomarías, las conversaciones que tendrías y las decisiones que harías, justificando tu enfoque..."
+                                    disabled={isLoadingGemini || isRecording}
+                                />
+                                <Button
+                                    onClick={handleToggleRecording}
+                                    variant="outline"
+                                    size="icon"
+                                    className="absolute top-2 right-2 h-8 w-8"
+                                    aria-label={isRecording ? 'Detener grabación' : 'Grabar plan por voz'}
+                                    disabled={!recognitionRef.current || isLoadingGemini}
+                                >
+                                    {isRecording ? <StopCircleIcon className="w-5 h-5 text-red-500" /> : <MicrophoneIcon className="w-5 h-5" />}
+                                </Button>
+                            </div>
+                            {speechError && <p className="text-sm text-red-600 mt-1">{speechError}</p>}
+                            {isRecording && <p className="text-sm text-blue-600 animate-pulse mt-1">Escuchando...</p>}
+                        </div>
+                        <Button
+                            onClick={handleSubmit}
+                            disabled={isLoadingGemini || !userResponse.trim() || isRecording}
+                            isLoading={isLoadingGemini}
+                            className="mt-4"
+                        >
+                            {isLoadingGemini ? 'Analizando Decisión...' : 'Analizar mi Decisión'}
+                        </Button>
+                    </Card>
+                )}
 
-        {geminiCritique && !isLoading && (
-            <Card className="border-l-4 border-teal-500">
-                <h4 className="text-lg font-semibold text-neutral-800 mb-2">Crítica Constructiva de la IA:</h4>
-                <p className="text-neutral-700 whitespace-pre-wrap">{geminiCritique}</p>
-            </Card>
-        )}
+                {isLoadingGemini && <div className="my-6"><LoadingSpinner text="Generando análisis..." /></div>}
 
-        <Card title="Próximamente y Módulos Relacionados" className="mt-8">
-            <p className="text-neutral-600">
-                Expande tus habilidades con estos temas:
-            </p>
-            <ul className="list-disc list-inside text-neutral-600 mt-2 space-y-2">
-                 <li>
-                    <a href="/#/skills-integration" className="text-primary hover:underline font-medium">
-                        Integración de habilidades técnicas y blandas
-                    </a>
-                </li>
-                <li>
-                    <a href="/#/project-management" className="text-primary hover:underline font-medium">
-                        Herramientas simuladas de gestión de tareas y proyectos
-                    </a>
-                </li>
-                 <li>
-                    <a href="/#/forums" className="text-primary hover:underline font-medium">
-                        Foros de debate guiados por IA
-                    </a>
-                </li>
-            </ul>
-        </Card>
-      </InteractiveModule>
-    </PageWrapper>
-  );
+                {geminiError && !isLoadingGemini && (
+                    <Card className="my-6 bg-red-50 border-red-500">
+                        <div className="flex items-center text-red-700">
+                            <XCircleIcon className="w-6 h-6 mr-2" />
+                            <p><strong>Error al obtener retroalimentación:</strong> {geminiError}</p>
+                        </div>
+                    </Card>
+                )}
+
+                {geminiFeedback && !isLoadingGemini && (
+                    <Card className="my-6 border-l-4 border-green-500">
+                        <h4 className="text-xl font-semibold text-neutral-800 mb-3 flex items-center">
+                            <CheckCircleIcon className="w-6 h-6 mr-2 text-green-600" />
+                            Análisis de tu Enfoque
+                        </h4>
+                        <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">
+                            <p>{geminiFeedback}</p>
+                        </div>
+                        <p className="mt-3 text-xs text-neutral-500 italic">Las decisiones de talento definen la cultura y el futuro de una organización.</p>
+                    </Card>
+                )}
+            </InteractiveModule>
+        </PageWrapper>
+    );
 };
 
 export default TalentManagementPage;

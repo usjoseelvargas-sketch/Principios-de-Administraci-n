@@ -4,10 +4,10 @@ import { AdministrativeTheory, CaseStudy, QualityTerm, KpiScenario, SmartGoalSce
 export const APP_TITLE = "2025-2 Profesor José Elías Vargas Mora";
 // APP_SUBTITLE is removed as it's no longer used in the layout.
 
-export const GEMINI_API_KEY = process.env.API_KEY; // This will be undefined in browser, used by service
+// La clave de la API de Gemini se gestiona de forma segura en el backend (api/gemini.ts)
 
 // Model Names
-export const GEMINI_TEXT_MODEL = "gemini-2.5-flash";
+export const GEMINI_TEXT_MODEL = "gemini-1.5-flash-latest";
 // export const GEMINI_IMAGE_MODEL = "imagen-3.0-generate-002"; // If image generation was needed
 
 
@@ -795,7 +795,6 @@ export const SMART_GOAL_SCENARIOS: SmartGoalScenario[] = [
     {id: 'sg3', title: 'Aumentar las Ventas en una Región Específica', context: 'Eres el gerente regional de ventas para la zona norte. Las ventas en tu región han estado estancadas durante los últimos dos trimestres. Tu objetivo es revitalizar el crecimiento.'},
     {id: 'sg4', title: 'Desarrollo Profesional y Aprendizaje de Nuevas Habilidades', context: 'Eres un analista de marketing que quiere crecer profesionalmente. Te has dado cuenta de que las habilidades en análisis de datos son cada vez más importantes en tu campo y quieres adquirir nuevas competencias.'},
 ];
-
 // Data for Automation Exercises Module
 export const AUTOMATION_SCENARIOS: AutomationScenario[] = [
   {

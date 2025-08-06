@@ -1,14 +1,17 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generateContent } from '../services/geminiService'; // CAMBIO: Importamos nuestro servicio
+
+// Componentes y Constantes
 import PageWrapper from '../components/PageWrapper';
 import InteractiveModule from '../components/InteractiveModule';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Card from '../components/ui/Card';
 import { CompassIcon, LightbulbIcon, CheckCircleIcon, XCircleIcon, MicrophoneIcon, StopCircleIcon } from '../constants';
-import { useGeminiTextQuery } from '../hooks/useGeminiQuery';
 import { StrategicPlanningScenario, StrategicPlanInputs, SpeechRecognition } from '../types';
 import { STRATEGIC_PLANNING_SCENARIOS } from '../constants';
 
+// --- TIPOS Y CONSTANTES LOCALES ---
 const planComponentLabels: Record<keyof StrategicPlanInputs, { title: string, placeholder: string }> = {
     mission: { title: 'Misión', placeholder: '¿Cuál es el propósito fundamental de la organización? ¿Por qué existe? (Ej: "Organizar la información del mundo...")' },
     vision: { title: 'Visión', placeholder: '¿Qué aspira a ser la organización en el futuro? ¿Cuál es su meta a largo plazo? (Ej: "Crear un futuro sostenible...")' },
@@ -21,19 +24,18 @@ const planComponentLabels: Record<keyof StrategicPlanInputs, { title: string, pl
 const StrategicPlanningPage: React.FC = () => {
     const [currentScenario, setCurrentScenario] = useState<StrategicPlanningScenario | null>(null);
     const [planInputs, setPlanInputs] = useState<StrategicPlanInputs>({ mission: '', vision: '', qualityPolicy: '', objectives: '', actionPlans: '' });
+    
+    // CAMBIO: Estados locales para manejar la llamada a la API
+    const [geminiFeedback, setGeminiFeedback] = useState<string | null>(null);
+    const [geminiError, setGeminiError] = useState<string | null>(null);
+    const [isLoadingGemini, setIsLoadingGemini] = useState<boolean>(false);
 
-    const {
-        data: geminiFeedback,
-        error: geminiError,
-        isLoading: isLoadingGemini,
-        executeQuery: fetchGeminiFeedback,
-        reset: resetGemini,
-    } = useGeminiTextQuery();
-
+    // Speech-to-text state
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const [recordingField, setRecordingField] = useState<keyof StrategicPlanInputs | null>(null);
     const [speechError, setSpeechError] = useState<string | null>(null);
 
+    // Speech-to-text setup (sin cambios)
     useEffect(() => {
         const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognitionAPI) {
@@ -50,7 +52,7 @@ const StrategicPlanningPage: React.FC = () => {
                 }
                 setSpeechError(null);
             };
-            recognition.onerror = (event) => setSpeechError(`Error: ${event.error}. Por favor, escribe.`);
+            recognition.onerror = (event) => setSpeechError(`Error en reconocimiento: ${event.error}. Por favor, escribe.`);
             recognition.onend = () => setRecordingField(null);
         }
         return () => {
@@ -73,10 +75,17 @@ const StrategicPlanningPage: React.FC = () => {
         }
     };
 
+    const resetGemini = useCallback(() => {
+        setGeminiFeedback(null);
+        setGeminiError(null);
+        setIsLoadingGemini(false);
+    }, []);
+
     const loadNewScenario = useCallback(() => {
         if (recordingField) recognitionRef.current?.stop();
         resetGemini();
         setPlanInputs({ mission: '', vision: '', qualityPolicy: '', objectives: '', actionPlans: '' });
+        setSpeechError(null);
         const randomIndex = Math.floor(Math.random() * STRATEGIC_PLANNING_SCENARIOS.length);
         setCurrentScenario(STRATEGIC_PLANNING_SCENARIOS[randomIndex]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,7 +103,9 @@ const StrategicPlanningPage: React.FC = () => {
 
     const handleSubmit = useCallback(async () => {
         if (!currentScenario || !isFormComplete) return;
+
         resetGemini();
+        setIsLoadingGemini(true);
 
         const prompt = `
             Eres un consultor de estrategia empresarial de alto nivel (como de McKinsey o BCG) y un coach ejecutivo. Estás evaluando un borrador de plan estratégico creado por un estudiante de administración para un escenario de negocio específico.
@@ -104,60 +115,49 @@ const StrategicPlanningPage: React.FC = () => {
             **Descripción:** "${currentScenario.scenario}"
 
             ### Plan Estratégico del Estudiante:
-            **Misión:**
-            ${planInputs.mission}
-
-            **Visión:**
-            ${planInputs.vision}
-
-            **Política de la Calidad:**
-            ${planInputs.qualityPolicy}
-
-            **Objetivos Estratégicos:**
-            ${planInputs.objectives}
-
-            **Planes de Acción:**
-            ${planInputs.actionPlans}
+            **Misión:** ${planInputs.mission}
+            **Visión:** ${planInputs.vision}
+            **Política de la Calidad:** ${planInputs.qualityPolicy}
+            **Objetivos Estratégicos:** ${planInputs.objectives}
+            **Planes de Acción:** ${planInputs.actionPlans}
 
             ### Tu Tarea de Evaluación:
             Proporciona una crítica constructiva y experta del plan, evaluando cada componente individualmente y en conjunto. Usa **exactamente** los siguientes encabezados en formato Markdown (iniciando con \`###\`).
 
             ### Evaluación de la Misión
-            - ¿Es inspiradora y define el propósito fundamental de la organización?
-            - ¿Es clara, concisa y fácil de recordar?
-            - ¿Se enfoca en el "por qué" de la empresa?
+            - ¿Es inspiradora y define el propósito fundamental? ¿Es clara y concisa?
 
             ### Evaluación de la Visión
-            - ¿Describe un futuro deseable y ambicioso?
-            - ¿Es motivadora y establece una dirección clara a largo plazo?
-            - ¿Es creíble pero desafiante?
+            - ¿Describe un futuro deseable y ambicioso? ¿Es motivadora?
 
             ### Evaluación de la Política de la Calidad
-            - ¿Refleja un compromiso con la calidad y la satisfacción del cliente?
-            - ¿Está alineada con la misión y la visión?
-            - ¿Es una guía para la mejora continua?
+            - ¿Refleja un compromiso con la calidad y la satisfacción del cliente? ¿Está alineada con la misión y visión?
 
             ### Evaluación de los Objetivos Estratégicos
-            - ¿Son los objetivos SMART (Específicos, Medibles, Alcanzables, Relevantes, con Plazo)? Analiza si cumplen con estos criterios.
-            - ¿Se derivan lógicamente de la misión y la visión?
-            - ¿Cubren áreas clave del negocio (financiera, clientes, procesos, etc.)?
+            - ¿Son los objetivos SMART (Específicos, Medibles, Alcanzables, Relevantes, con Plazo)? Analízalos.
 
             ### Evaluación de los Planes de Acción
-            - ¿Son los planes de acción concretos y detallados?
-            - ¿Se vinculan claramente con los objetivos estratégicos?
-            - ¿Parecen realistas en términos de recursos y tiempo? ¿Identifican responsables (aunque sea implícitamente)?
+            - ¿Son concretos y se vinculan claramente a los objetivos? ¿Parecen realistas?
 
             ### Cohesión y Alineación General
-            - ¿Hay una "línea dorada" que conecta la misión, la visión, los objetivos y los planes de acción?
-            - ¿El plan estratégico en su conjunto es una respuesta coherente al escenario presentado?
+            - ¿Hay una "línea dorada" que conecta todos los elementos del plan? ¿Es una respuesta coherente al escenario?
 
             ### Recomendación General de un Consultor
-            - Ofrece 2 o 3 consejos de alto nivel que el estudiante podría considerar para fortalecer su pensamiento estratégico. Anima al estudiante a seguir desarrollando esta habilidad crítica.
+            - Ofrece 2 o 3 consejos de alto nivel para fortalecer el pensamiento estratégico del estudiante.
 
             Mantén un tono de mentor experto: exigente pero justo y alentador.
         `;
-        await fetchGeminiFeedback(prompt, 'Eres un consultor de estrategia empresarial y coach ejecutivo, evaluando un plan estratégico.');
-    }, [currentScenario, planInputs, fetchGeminiFeedback, resetGemini, isFormComplete]);
+        
+        try {
+            const feedback = await generateContent(prompt);
+            setGeminiFeedback(feedback);
+        } catch (e) {
+            console.error("Error al enviar plan estratégico:", e);
+            setGeminiError(e instanceof Error ? e.message : "Ocurrió un error al obtener la retroalimentación.");
+        } finally {
+            setIsLoadingGemini(false);
+        }
+    }, [currentScenario, planInputs, resetGemini, isFormComplete]);
     
     const formattedFeedback = (text: string) => text.split('### ').map((section, index) => {
         if (index === 0 && section.trim() === '') return null;
@@ -166,10 +166,10 @@ const StrategicPlanningPage: React.FC = () => {
         const content = lines.join('\n').trim();
         if (!title) return <p key={index} className="whitespace-pre-wrap">{content}</p>;
         return (
-          <div key={index} className="mb-4">
-            <h4 className="text-md font-semibold text-primary mb-1">{title}</h4>
-            <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">{content}</div>
-          </div>
+            <div key={index} className="mb-4">
+                <h4 className="text-md font-semibold text-primary mb-1">{title}</h4>
+                <div className="prose prose-sm max-w-none text-neutral-700 whitespace-pre-wrap">{content}</div>
+            </div>
         );
     });
 
@@ -205,17 +205,16 @@ const StrategicPlanningPage: React.FC = () => {
                                             onChange={(e) => handleInputChange(key, e.target.value)}
                                             className="w-full p-2 border border-neutral-300 rounded-md shadow-sm focus:ring-primary focus:border-primary pr-12"
                                             placeholder={placeholder}
-                                            onPaste={(e) => e.preventDefault()}
                                             disabled={isLoadingGemini || !!recordingField}
                                         />
                                         <Button
                                             onClick={() => handleToggleRecording(key)}
-                                            variant="outline" size="sm"
-                                            className="absolute top-2 right-2 !p-2 h-8 w-8"
+                                            variant="outline" size="icon"
+                                            className="absolute top-2 right-2 h-8 w-8"
                                             aria-label={recordingField === key ? `Detener grabación para ${title}` : `Grabar ${title} por voz`}
-                                            disabled={!recognitionRef.current}
+                                            disabled={!recognitionRef.current || (isLoadingGemini && recordingField !== key)}
                                         >
-                                            {recordingField === key ? <StopCircleIcon className="w-4 h-4 text-red-500" /> : <MicrophoneIcon className="w-4 h-4" />}
+                                            {recordingField === key ? <StopCircleIcon className="w-5 h-5 text-red-500" /> : <MicrophoneIcon className="w-5 h-5" />}
                                         </Button>
                                     </div>
                                 </Card>
@@ -238,7 +237,7 @@ const StrategicPlanningPage: React.FC = () => {
                 
                 {isLoadingGemini && <div className="my-6"><LoadingSpinner text="Generando análisis de consultoría..." /></div>}
 
-                {geminiError && (
+                {geminiError && !isLoadingGemini && (
                     <Card className="my-6 bg-red-50 border-red-500">
                         <div className="flex items-center text-red-700">
                             <XCircleIcon className="w-6 h-6 mr-2" />
